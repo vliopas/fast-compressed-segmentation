@@ -39,4 +39,6 @@
 // ----------------------------------------------------
 void saveDatasetToFile(const Encoding::CompressedDataset& dataset, const std::string& filename);
 
+Encoding::CompressedDataset loadDatasetFromFile(const std::string& filename);
+
 NpyArray loadNpy(const std::string& filename);

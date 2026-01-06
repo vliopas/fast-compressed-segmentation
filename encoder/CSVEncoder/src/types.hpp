@@ -10,6 +10,15 @@
 using LabelType = uint64_t;
 static constexpr LabelType EMPTY_VALUE = std::numeric_limits<LabelType>::max();
 
+
+static constexpr uint32_t RANS_STATE_BITS = 32; // the current ANS coder state — large integer that evolves as we encode symbols
+static constexpr uint32_t RANS_LIMIT = 1u << 23; // minimum allowed value of the state before encoding a new symbol
+//If the internal state drops below this threshold, you must renormalize (shift out bytes)
+constexpr uint32_t LOG_TOTAL_FREQ = 12;
+static constexpr uint32_t RANS_TOTAL = 1 << LOG_TOTAL_FREQ;   // or 8192/16384
+static constexpr uint32_t RANS_INIT = RANS_LIMIT;     // initial state
+
+
 template<std::size_t N, typename T = int>
 struct dim {
     T data[N] = {};
@@ -143,6 +152,7 @@ namespace Encoding
         std::vector<LabelType> palette; // Palette of labels used in the brick
         std::vector<uint8_t> encodedData; // Encoded operation data as byte stream
         std::vector<uint8_t> isLeaf; // Is node of brick inner or leaf node?
+        uint32_t ID;
     };
 
     using FrequencyTable = std::array<size_t, 16>; // Frequency table for 16 possible nibbles

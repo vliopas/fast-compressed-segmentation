@@ -31,6 +31,8 @@ struct Brick
 
     std::array<std::vector<Node>, Levels> levels; // L_0 finest -> L_N coarsest level
 
+    uint32_t ID;
+
     // Access level from finest
     // returns the l-th finest level (0 = finest)
     // this respects the ordering of the paper where L0 is the finest level
@@ -96,36 +98,57 @@ std::vector<Brick<b>> splitGridIntoBricks(const NpyArray& array)
     if (array.shape.size() != 3)
         throw std::runtime_error("Expected a 3D array");
 
-    const size_t width  = array.shape[0];
+    const size_t width = array.shape[0];
     const size_t height = array.shape[1];
-    const size_t depth  = array.shape[2];
+    const size_t depth = array.shape[2];
+
+    // Number of bricks in each dimension (ceil division)
+    const size_t bricksX = (width + b - 1) / b;
+    const size_t bricksY = (height + b - 1) / b;
+    const size_t bricksZ = (depth + b - 1) / b;
 
     std::vector<Brick<b>> bricks;
+    bricks.reserve(bricksX * bricksY * bricksZ);
 
-    // Iterate over the grid in steps of brick size
-    // We are initializing the finest level L0
-    for (size_t x0 = 0; x0 < width; x0 += b)
-        for (size_t y0 = 0; y0 < height; y0 += b)
-            for (size_t z0 = 0; z0 < depth; z0 += b)
+    // Iterate over bricks in brick-space
+    for (size_t bx = 0; bx < bricksX; ++bx)
+        for (size_t by = 0; by < bricksY; ++by)
+            for (size_t bz = 0; bz < bricksZ; ++bz)
             {
                 Brick<b> pyramid;
 
+                // ------------------------------------------------
+                // Assign a stable brick ID
+                // Morton preserves spatial locality and ordering
+                // ------------------------------------------------
+                pyramid.ID =
+                    Utils::morton3D(bx, by, bz); // returns uint64_t
+
                 auto& nodes = pyramid.levels[0]; // L0
                 nodes.resize(b * b * b);
+
+                // Convert brick-space ? voxel-space
+                const size_t x0 = bx * b;
+                const size_t y0 = by * b;
+                const size_t z0 = bz * b;
 
                 for (size_t dx = 0; dx < b; ++dx)
                     for (size_t dy = 0; dy < b; ++dy)
                         for (size_t dz = 0; dz < b; ++dz)
                         {
-                            size_t gx = x0 + dx;
-                            size_t gy = y0 + dy;
-                            size_t gz = z0 + dz;
+                            const size_t gx = x0 + dx;
+                            const size_t gy = y0 + dy;
+                            const size_t gz = z0 + dz;
 
-                            LabelType label = 0; // default
+                            LabelType label = 0; // default / padding
                             if (gx < width && gy < height && gz < depth)
-                                label = array.data[gx + width * (gy + height * gz)];
+                                label = array.data[
+                                    gx + width * (gy + height * gz)
+                                ];
 
-                            size_t mortonIndex = Utils::morton3D(dx, dy, dz);
+                            const size_t mortonIndex =
+                                Utils::morton3D(dx, dy, dz);
+
                             nodes[mortonIndex] = { label, true };
                         }
 

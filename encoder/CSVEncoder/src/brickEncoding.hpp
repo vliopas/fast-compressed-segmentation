@@ -5,17 +5,12 @@
 #include <utility>
 #include <ranges>
 
+#include <iostream>
+#include <ios>
+
 using OpEntry = Encoding::OpEntry;
 using OpType = Encoding::OpType;
 using RansModel = Encoding::RansModel;
-
-static constexpr uint32_t RANS_STATE_BITS = 32; // the current ANS coder state — large integer that evolves as we encode symbols
-
-static constexpr uint32_t RANS_LIMIT = 1u << 23; // minimum allowed value of the state before encoding a new symbol
-//If the internal state drops below this threshold, you must renormalize (shift out bytes)
-
-static constexpr uint32_t RANS_TOTAL = 4096;   // or 8192/16384
-static constexpr uint32_t RANS_INIT = RANS_LIMIT;     // initial state
 
 namespace Encoding
 {
@@ -333,6 +328,7 @@ namespace Encoding
         auto [bytes, isLeaf] = packOperationsToNibbles(operations);
         compressedBrick.encodedData = std::move(bytes);
         compressedBrick.isLeaf = std::move(isLeaf);
+        compressedBrick.ID = brick.ID;
 
         // Optional callback to update external stream
         if (updateFunc)
@@ -362,9 +358,8 @@ namespace Encoding
     CompressedDataset compressDataset(std::vector<Brick<b>>& bricks)
     {
         // Encode to nibbles
-        //std::vector<EncoderState> brickStates;
-        std::vector<CompressedBrick> nibbleBricks;
-        nibbleBricks.reserve(bricks.size());
+        std::vector<CompressedBrick> compressedBricks;
+        compressedBricks.reserve(bricks.size());
 
         for (size_t i = 0; i < bricks.size(); ++i)
         {
@@ -376,73 +371,60 @@ namespace Encoding
             // Encode operations
             CompressedBrick compressedBrick = encodeBrick(brick,
                                              (i % 512 == 0) ? updateFrequencyTables : nullptr);
-            //EncoderState compressedBrick = encodeBrick(brick);
+            compressedBricks.push_back(compressedBrick);
 
-            // Construct compressed brick directly
-
-            // Save compressed brick
-            nibbleBricks.push_back(compressedBrick);
-
-            //brickStates.push_back(state);
         }
 
         // build RANS models
         RansModel interiorModel = buildRansModel(interiorFreqTable);
         RansModel leafModel     = buildRansModel(leafFreqTable);
 
-
         // rANS compress each brick
-        //for(auto& brick : brickStates)
-        //{
-        //    // Flatten the nibble stream with isLeaf/interior info
-        //    struct SymbolEntry { uint8_t nibble; bool isInterior; };
-        //    std::vector<SymbolEntry> symbols;
+        for(auto& brick : compressedBricks)
+        {
+            // Flatten the nibble stream with isLeaf/interior info
+            struct SymbolEntry { uint8_t nibble; bool isInterior; };
+            std::vector<SymbolEntry> symbols;
 
-        //    size_t nibIndex = 0;
-        //    for (uint8_t byte : brick.operations)
-        //    {
-        //        uint8_t hi = byte >> 4;
-        //        uint8_t lo = byte & 0x0F;
+            size_t nibIndex = 0;
+            for (uint8_t byte : brick.encodedData)
+            {
+                uint8_t hi = byte >> 4;
+                uint8_t lo = byte & 0x0F;
 
-        //        // High nibble
-        //        if (nibIndex < brick.isLeaf.size())
-        //            symbols.push_back({ hi, !brick.isLeaf[nibIndex++] }); // interior = !isLeaf
+                // High nibble
+                if (nibIndex < brick.isLeaf.size())
+                    symbols.push_back({ hi, !brick.isLeaf[nibIndex++] }); // interior = !isLeaf
 
-        //        // Low nibble
-        //        if (nibIndex < brick.isLeaf.size())
-        //            symbols.push_back({ lo, !brick.isLeaf[nibIndex++] });
-        //    }
+                // Low nibble
+                if (nibIndex < brick.isLeaf.size())
+                    symbols.push_back({ lo, !brick.isLeaf[nibIndex++] });
+            }
 
-        //    // Encode symbols backwards
-        //    uint32_t state = RANS_INIT;
-        //    std::vector<uint8_t> compressedStream;
-        //    compressedStream.reserve(brick.operations.size()); // rough reserve
+            // Encode symbols backwards
+            uint32_t state = RANS_INIT;
+            std::vector<uint8_t> compressedStream;
+            compressedStream.reserve(brick.encodedData.size()); // rough reserve
 
-        //    for (const auto& entry : std::views::reverse(symbols))
-        //    {
-        //        const RansModel& model = entry.isInterior ? interiorModel : leafModel;
-        //        ransEncodeSymbol(state, compressedStream, entry.nibble, model);
-        //    }
+            for (const auto& entry : std::views::reverse(symbols))
+            {
+                const RansModel& model = interiorModel;
+                ransEncodeSymbol(state, compressedStream, entry.nibble, model);
+            }
 
-        //    // Final flush
-        //    ransFlush(state, compressedStream);
+            // Final flush
+            ransFlush(state, compressedStream);
 
-        //    // The output is now forward-order byte stream for decoder
-        //    brick.operations = std::move(compressedStream);
+            // The output is now forward-order byte stream for decoder
+            brick.encodedData = std::move(compressedStream);
+            std::reverse(brick.isLeaf.begin(), brick.isLeaf.end()); // reverse that so you forward iterate during decoding
 
-        //    CompressedBrick nibbleBrick{
-        //        .palette = std::move(brick.palette),
-        //        .encodedData = std::move(brick.operations)
-        //    };
-
-        //    // Save compressed brick
-        //    nibbleBricks.push_back(std::move(nibbleBrick));
-        //}
+        }
         
         return CompressedDataset{
             .interiorModel = interiorModel,
             .leafModel     = leafModel,
-            .bricks        = std::move(nibbleBricks)
+            .bricks        = std::move(compressedBricks)
         };
     }
 

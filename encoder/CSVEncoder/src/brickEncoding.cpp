@@ -180,6 +180,7 @@ RansModel Encoding::buildRansModel(const FrequencyTable& rawTable)
     model.cumulativeFreq[N] = acc;
 
     model.totalFreq = acc;
+    assert(model.totalFreq == RANS_TOTAL);
 
     return model;
 }
@@ -190,23 +191,15 @@ std::vector<uint8_t>& out,       // <-- OUTPUT BYTE STREAM
 uint8_t symbol,
 const RansModel& model)
 {
-    const uint32_t freq = model.freq[symbol];
-    const uint32_t start = model.cumulativeFreq[symbol];
-
-    // Safety (keep during development)
-    assert(freq > 0);
-    assert(start + freq <= model.totalFreq);
-    assert(model.totalFreq == RANS_TOTAL);
+    uint32_t freq = model.freq[symbol];
+    uint32_t start = model.cumulativeFreq[symbol];
 
     // Renormalize
-    while (state >= freq * RANS_LIMIT)
+    while (state >= ((RANS_LIMIT >> LOG_TOTAL_FREQ) << 8) * freq)
     {
-        out.push_back(static_cast<uint8_t>(state & 0xFF));
+        out.push_back(state & 0xFF);
         state >>= 8;
     }
 
-    // Encode
-    state = ((state / freq) * RANS_TOTAL)
-        + (state % freq)
-        + start;
-}
+    state = ((state / freq) * model.totalFreq) + (state % freq) + start;
+ }

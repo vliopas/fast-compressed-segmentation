@@ -36,12 +36,21 @@ int main() {
     auto compressed = Encoding::compressDataset(bricks);
     saveDatasetToFile(compressed, "compressed_dataset.csbd");
 
+    Encoding::CompressedDataset loadedDataset = loadDatasetFromFile("compressed_dataset.csbd");
+
     constexpr size_t targetLOD = Brick<brickSize>::Levels - 1;
 
     std::vector<LabelType> decoded;
-    for (size_t i = 0; i < compressed.bricks.size(); ++i)
+    for (size_t i = 0; i < loadedDataset.bricks.size(); ++i)
     {
-        decoded = decodeBrick<brickSize>(compressed.bricks[i], targetLOD);
+        auto& brick = loadedDataset.bricks[i];
+
+        // entropy decode ONCE
+        brick.encodedData = decodeRansStream(brick, loadedDataset.interiorModel, loadedDataset.leafModel);
+
+        // 2. semantic decode (can be repeated for different LODs)
+        decoded = decodeBrick<brickSize>( brick, targetLOD);
+
         std::cout << "Decoded brick " << i
             << ", voxels = " << decoded.size() << "\n";
     }

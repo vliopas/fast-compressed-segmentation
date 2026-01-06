@@ -1,6 +1,8 @@
 ﻿#include "brickDecoding.hpp"
 #include "brickEncoding.hpp"
 
+#include <ranges>
+
 // Returns Morton index in output array for a coarse node
 size_t coarseNodeToOutputIndex(size_t mortonL, size_t l, size_t t)
 {
@@ -104,4 +106,73 @@ LabelType getNeighborValue(const std::vector<LabelType>& out, size_t level, size
     // Later Z → fallback to neighbor’s parent
     uint32_t parentMorton = Utils::morton3D(childCoords.x >> 1, childCoords.y >> 1, childCoords.z >> 1);
     return out[coarseNodeToOutputIndex(parentMorton, level, targetLOD)];
+}
+
+inline uint32_t findSymbol(uint32_t x, const RansModel& m)
+{
+    uint32_t s = 0;
+    while (s + 1 < m.cumulativeFreq.size() &&
+           x >= m.cumulativeFreq[s + 1])
+    {
+        ++s;
+    }
+    return s;
+}
+
+uint8_t ransDecodeSymbol(uint32_t& state, const std::vector<uint8_t>& in, size_t& inPos, const RansModel& model)
+{
+    uint32_t x = state % model.totalFreq;
+
+    uint32_t s = findSymbol(x, model); // cumulative lookup
+    uint32_t freq = model.freq[s];
+    uint32_t start = model.cumulativeFreq[s];
+
+    state = freq * (state / model.totalFreq) + (x - start);
+
+    while (state < (RANS_LIMIT) && inPos > 0)
+        state = (state << 8) | in[--inPos];
+
+    return s;
+}
+
+std::vector<uint8_t> decodeRansStream(const CompressedBrick& brick, const RansModel& interiorModel, const RansModel& leafModel)
+{
+    size_t n = brick.isLeaf.size();
+    std::vector<uint8_t> repacked;
+
+    uint32_t state = 0;
+    size_t inPos = brick.encodedData.size();
+    size_t outIdx = 0;
+
+    assert(inPos >= 4);
+
+    // read little-endian state from the END
+    uint32_t b0 = brick.encodedData[--inPos];
+    uint32_t b1 = brick.encodedData[--inPos];
+    uint32_t b2 = brick.encodedData[--inPos];
+    uint32_t b3 = brick.encodedData[--inPos];
+
+    state = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+
+    // Use reverse iterator over isLeaf
+    auto it = brick.isLeaf.begin();
+
+    while (it != brick.isLeaf.end())
+    {
+        // First decoded symbol is HIGH nibble
+        bool hiIsLeaf = *it++;
+        uint8_t hi = ransDecodeSymbol( state, brick.encodedData, inPos,  interiorModel ) & 0x0F;
+
+        uint8_t lo = 0;
+        if (it != brick.isLeaf.end())
+        {
+            bool loIsLeaf = *it++;
+            lo = ransDecodeSymbol( state, brick.encodedData, inPos,  interiorModel ) & 0x0F;
+        }
+
+        repacked.push_back((hi << 4) | lo);
+    }
+
+
+    return repacked;
 }

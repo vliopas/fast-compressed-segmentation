@@ -124,48 +124,16 @@ LabelType getNeighborValue(
     OpType op,
     size_t targetLOD);
 
-//// Function to decode a symbol and store if it is an interior or leaf node
-//void ransDecodeSymbol(uint32_t& state, uint8_t nibble, std::vector<uint8_t>& decodedNibbles, std::vector<bool>& isLeaf)
-//{
-//    // Determine whether it's an interior or leaf (based on your model or flags)
-//    bool leafFlag = (nibble < LEAF_THRESHOLD); // For example, leaf nibbles are below a certain value
-//
-//    decodedNibbles.push_back(nibble);
-//    isLeaf.push_back(leafFlag);
-//
-//    // Renormalize rANS state if necessary
-//    while (state < RANS_LIMIT)
-//    {
-//        // Flush the state as needed
-//        decodedNibbles.push_back(uint8_t(state & 0xFF));
-//        state >>= 8;
-//    }
-//
-//    // Update the rANS state based on the symbol
-//    state = (state / symbolFrequency[nibble]) * RANS_TOTAL + (state % symbolFrequency[nibble]);
-//}
-//
-//// Decode the rANS-compressed byte stream into nibbles
-//void decodeRansBrick(const CompressedBrick& brick, std::vector<uint8_t>& decodedNibbles, std::vector<bool>& isLeaf)
-//{
-//    uint32_t state = RANS_INIT;
-//    size_t bytePos = 0;
-//
-//    // Iterate over the rANS compressed data
-//    while (bytePos < brick.encodedData.size())
-//    {
-//        uint8_t byte = brick.encodedData[bytePos++];
-//
-//        uint8_t hi = byte >> 4; // High nibble
-//        uint8_t lo = byte & 0x0F; // Low nibble
-//
-//        // Decode the high nibble
-//        ransDecodeSymbol(state, hi, decodedNibbles, isLeaf);
-//
-//        // Decode the low nibble
-//        ransDecodeSymbol(state, lo, decodedNibbles, isLeaf);
-//    }
-//}
+uint8_t ransDecodeSymbol(
+    uint32_t& state,
+    const std::vector<uint8_t>& in,
+    size_t& inPos,
+    const RansModel& model);
+
+std::vector<uint8_t> decodeRansStream(
+    const CompressedBrick& brick,
+    const RansModel& interiorModel,
+    const RansModel& leafModel);
 
 /**
  * @brief Decode a compressed brick into a flat voxel label array.
