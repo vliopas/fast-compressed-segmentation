@@ -9,6 +9,7 @@ bin-int/
 
 # Ignore VS files and folders
 .vs/
+.vscode/
 **.sln
 **.vcxproj
 **.vcxproj.filters
