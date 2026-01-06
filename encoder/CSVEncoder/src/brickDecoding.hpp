@@ -4,6 +4,7 @@
 
 #include <tuple>
 #include <vector>
+#include <iostream>
 
 using namespace Encoding;
 using namespace Utils;
@@ -109,8 +110,8 @@ void fillSubBlock(
  *    neighbor’s PARENT node, whose label is guaranteed to be known.
  *
  * @param out           Output label buffer containing already decoded nodes.
- * @param level         Pyramid level of the child node (parent is at level-1).
- * @param childMortonIdx Morton (Z-order) index of the child node at this level.
+ * @param level         Pyramid level of the parent node (child is at level+1).
+ * @param childMortonIdx Morton (Z-order) index of the child node at level+1.
  * @param op            Neighbor reuse operation type (Rx, Ry, or Rz).
  * @param targetLOD     Target level-of-detail of the decoded output.
  *
@@ -216,7 +217,7 @@ std::vector<LabelType> decodeBrick(const CompressedBrick& brick, size_t targetLO
                     val = brick.palette[ip];
                     break;
                 case OpType::PaletteBackD:
-                    val = brick.palette[ip - delta];
+                    val = brick.palette[ip - delta - 1];
                     break;
                 }
 

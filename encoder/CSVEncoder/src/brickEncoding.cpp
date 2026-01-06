@@ -6,8 +6,9 @@
 
 Encoding::FrequencyTable Encoding::interiorFreqTable{};
 Encoding::FrequencyTable Encoding::leafFreqTable{};
+Encoding::OperationStats Encoding::globalOperationStats{};
 
-std::vector<uint8_t>
+std::pair<std::vector<uint8_t>, size_t>
 Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
 {
     // Bytes = final packed stream     (each byte = 2 nibbles)
@@ -20,6 +21,7 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
     // Reserve some memory to reduce reallocations
     bytes.reserve((operations.size() * 3) / 2);
 
+    size_t nibbleCount = 0;  // Track actual nibbles (excluding padding)
 
     // ------------------------------------------------------------
     // Nibble-pairing state
@@ -34,6 +36,7 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
     auto pushNibble = [&](uint8_t nib)
         {
             nib &= 0x0F;                // Keep only 4 bits
+            nibbleCount++;              // Count actual nibbles
 
             if (!haveHigh)
             {
@@ -80,10 +83,10 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
     // If a high nibble is left without a partner, pad low nibble = 0
     if (haveHigh)
     {
-        bytes.push_back(highNib << 4); // low nibble = 0
+        bytes.push_back(highNib << 4); // low nibble = 0 (padding, not counted)
     }
 
-    return bytes;
+    return { bytes, nibbleCount };
     // ------------------------------------------------------------
 }
 

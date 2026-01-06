@@ -14,6 +14,78 @@ using RansModel = Encoding::RansModel;
 
 namespace Encoding
 {
+    // Global operation statistics
+    struct OperationStats
+    {
+        size_t parentReuse = 0;
+        size_t neighborXPos = 0;  // +X neighbor
+        size_t neighborXNeg = 0;  // -X neighbor
+        size_t neighborYPos = 0;  // +Y neighbor
+        size_t neighborYNeg = 0;  // -Y neighbor
+        size_t neighborZPos = 0;  // +Z neighbor
+        size_t neighborZNeg = 0;  // -Z neighbor
+        size_t paletteAdvance = 0;
+        size_t paletteBack0 = 0;
+        size_t paletteBackD = 0;
+
+        size_t total() const
+        {
+            return parentReuse + neighborXPos + neighborXNeg + neighborYPos + neighborYNeg + 
+                   neighborZPos + neighborZNeg + paletteAdvance + paletteBack0 + paletteBackD;
+        }
+
+        void increment(OpType op, dim3 nodeCoords = {0, 0, 0})
+        {
+            switch (op)
+            {
+            case OpType::ParentReuse:   
+                parentReuse++; 
+                break;
+            case OpType::NeighborX:     
+                if ((nodeCoords.x & 1) == 0) neighborXNeg++; 
+                else neighborXPos++; 
+                break;
+            case OpType::NeighborY:     
+                if ((nodeCoords.y & 1) == 0) neighborYNeg++; 
+                else neighborYPos++; 
+                break;
+            case OpType::NeighborZ:     
+                if ((nodeCoords.z & 1) == 0) neighborZNeg++; 
+                else neighborZPos++; 
+                break;
+            case OpType::PaletteAdvance: 
+                paletteAdvance++; 
+                break;
+            case OpType::PaletteBack0:  
+                paletteBack0++; 
+                break;
+            case OpType::PaletteBackD:  
+                paletteBackD++; 
+                break;
+            }
+        }
+
+        void logStats() const
+        {
+            std::cout << "\n========== Encoding Operation Statistics ==========\n";
+            std::cout << "Parent Reuse (Rp):      " << parentReuse << "\n";
+            std::cout << "Neighbor -X (Rx-):      " << neighborXNeg << "\n";
+            std::cout << "Neighbor +X (Rx+):      " << neighborXPos << "\n";
+            std::cout << "Neighbor -Y (Ry-):      " << neighborYNeg << "\n";
+            std::cout << "Neighbor +Y (Ry+):      " << neighborYPos << "\n";
+            std::cout << "Neighbor -Z (Rz-):      " << neighborZNeg << "\n";
+            std::cout << "Neighbor +Z (Rz+):      " << neighborZPos << "\n";
+            std::cout << "Palette Advance (Pa):   " << paletteAdvance << "\n";
+            std::cout << "Palette Back0 (P0):     " << paletteBack0 << "\n";
+            std::cout << "Palette BackD (Pδ):     " << paletteBackD << "\n";
+            std::cout << "---------------------------------------------------\n";
+            std::cout << "Total Operations:       " << total() << "\n";
+            std::cout << "====================================================\n\n";
+        }
+    };
+
+    extern OperationStats globalOperationStats;
+
     /**
      * @brief Pack a sequence of octree operations into a compact nibble stream.
      *
@@ -26,8 +98,9 @@ namespace Encoding
      *
      * @param operations  Vector of operations to pack (OpEntry structs).
      *
-     * @return std::pair<std::vector<uint8_t>, std::vector<uint8_t>>
+     * @return std::pair<std::vector<uint8_t>, size_t>
      *         - first : Packed byte stream (2 nibbles per byte)
+     *         - second : Actual nibble count (excluding padding)
      *
      * @note
      *  - PaletteBackD operations generate two nibbles: primary opcode + delta nibble.
@@ -35,7 +108,7 @@ namespace Encoding
      *    its low nibble.
      *  - This function prepares data for frequency analysis and later decoding.
      */
-    std::vector<uint8_t> packOperationsToNibbles(const std::vector<OpEntry>& operations);
+    std::pair<std::vector<uint8_t>, size_t> packOperationsToNibbles(const std::vector<OpEntry>& operations);
 
     /**
      * @brief Update frequency tables for leaf and interior operations from a packed stream.
@@ -90,7 +163,8 @@ namespace Encoding
         const Node& parent,
         size_t levelSize,
         dim3 nodeCoords,
-        CompressedBrick& compressedBrick)
+        CompressedBrick& compressedBrick,
+        size_t levelIndex)  // Add level index parameter
     {
         auto L = node.label;
 
@@ -103,7 +177,6 @@ namespace Encoding
         // Neighbor reuse (Rx, Ry, Rz)
         // ------------------------------
         auto currentMorton = Utils::morton3D(nodeCoords.x, nodeCoords.y, nodeCoords.z);
-        size_t levelIndex = std::countr_zero(levelSize); // levelIndex = log_2(levelSize)
 
         auto tryNeighbor = [&](dim3 nodeCoords, OpType opType) -> std::optional<OpType>
         {
@@ -255,6 +328,7 @@ namespace Encoding
         rootEntry.op = OpType::PaletteAdvance;    // root is always in palette
         rootEntry.stopBit = root.constantChildren ? 0x01 : 0x00;
         operations.push_back(rootEntry);
+        globalOperationStats.increment(rootEntry.op);  // Track root operation
 
         // --- Loop over levels from coarsest (0) to the second-to-finest (N-1) ---
         // Corresponds to pseudocode line 3: "for l ∈ [N .. 1]"
@@ -303,7 +377,8 @@ namespace Encoding
 
                     // Determine the best operation for this child
                     // Pseudocode line 12: "op ← bestOperation(parent, pyramid, palette, L)"
-                    OpEntry entry = bestOperation(brick, childNode, parentNode, childLevelSize, parentIdx, compressedBrick);
+                    dim3 childCoords{(int)childX, (int)childY, (int)childZ};
+                    OpEntry entry = bestOperation(brick, childNode, parentNode, childLevelSize, childCoords, compressedBrick, l + 1);
 
                     // Update palette if operation requires
                     // Pseudocode line 13: "if op = Pa then palette.push(L)"
@@ -315,15 +390,16 @@ namespace Encoding
                     entry.stopBit = stop ? 0x01 : 0x00;
 
                     operations.push_back(entry); // append operation to stream
+                    globalOperationStats.increment(entry.op, childCoords);  // Track operation statistic with coordinates
                 }
             }
         }
 
         // Pack the operations to nibbles (4-bit) for output
-        auto bytes = packOperationsToNibbles(operations);
+        auto [bytes, nibbleCount] = packOperationsToNibbles(operations);
         compressedBrick.encodedData = std::move(bytes);
         compressedBrick.ID = brick.ID;
-        compressedBrick.nSymbols = operations.size();
+        compressedBrick.nSymbols = static_cast<uint32_t>(nibbleCount);
 
         // Optional callback to update external stream
         if (updateFunc)

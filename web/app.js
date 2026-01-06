@@ -1,190 +1,11 @@
-import { loadDatasetFromArrayBuffer } from "./datasetLoader.js";
-import { decodeAllRansBricks } from './decode.js';
+import { loadDatasetFromArrayBuffer } from "./scripts/datasetLoader.js";
+import { decodeAllRansBricks } from './scripts/decode.js';
+import { initWebGPU, updateLightingOptions } from './scripts/webgpuSetup.js';
+import { initRenderLoop, requestValidationOnce } from './scripts/renderLoop.js';
 
-let device;
-let context;
+let currentLightAngle = 25;
 
-let pipeline;
-let bindGroup;
-let computePipeline;
-let computeBindGroup;
-
-let vertexBuffer;
-let uniformBuffer;
-let storageTexture;
-
-let canvas;
-let dataset;
-
-async function loadShader(url) {
-    const response = await fetch(url);
-    return await response.text();
-}
-
-async function initWebGPU() {
-    // Check for WebGPU support
-    if (!navigator.gpu) {
-        console.error("WebGPU not supported!");
-        return;
-    }
-
-    // Get GPU adapter and device
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) {
-        console.error("No GPU adapter found. Check your browser and hardware.");
-        return;
-    }
-
-    device = await adapter.requestDevice();
-    console.log("WebGPU device ready!", device);
-
-    // Get canvas context
-    canvas = document.getElementById("gpuCanvas");
-    context = canvas.getContext("webgpu");
-
-    // Configure swap chain
-    const format = navigator.gpu.getPreferredCanvasFormat();
-    context.configure({
-        device: device,
-        format: format,
-        alphaMode: 'opaque'
-    });
-
-    // Vertex data for a triangle (x, y positions)
-    const vertices = new Float32Array([
-        0.0,  0.5,   // top
-       -0.5, -0.5,   // bottom left
-        0.5, -0.5    // bottom right
-    ]);
-
-    // Vertex buffer for quad (two triangles)
-    const quadVertices = new Float32Array([
-    -1,-1,  1,-1,  -1,1,  // first triangle
-        1,-1,  1,1,   -1,1   // second triangle
-    ]);
-
-
-    // Create vertex buffer
-    vertexBuffer = device.createBuffer({
-        size: vertices.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    device.queue.writeBuffer(vertexBuffer, 0, vertices);
-
-    // Uniform buffer
-    uniformBuffer = device.createBuffer({
-        size: 16, // 2 floats (angle, scale) = 8 bytes, align to 16
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    // Storage texture for compute pass output
-    storageTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-
-    // Load shader code
-    const vertexCode = await loadShader("shaders/vertex.wgsl");
-    const fragmentCode = await loadShader("shaders/fragment.wgsl");
-
-    // Simple WGSL shaders
-    const shaderModule = device.createShaderModule({
-        code: vertexCode + "\n" + fragmentCode
-    });
-
-    // Pipeline setup
-    pipeline = device.createRenderPipeline({
-        layout: "auto",
-        vertex: {
-            module: shaderModule,
-            entryPoint: "vs_main",
-            buffers: [{
-                arrayStride: 2 * 4,
-                attributes: [{
-                    shaderLocation: 0,
-                    offset: 0,
-                    format: "float32x2"
-                }]
-            }]
-        },
-        fragment: {
-            module: shaderModule,
-            entryPoint: "fs_main",
-            targets: [{ format: format }]
-        },
-        primitive: {
-            topology: "triangle-list"
-        }
-    });
-
-    // Bind group
-    bindGroup = device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-            { binding: 0, resource: { buffer: uniformBuffer } },
-            { binding: 1, resource: storageTexture.createView() }
-        ]
-    });
-
-    // Compute pipeline
-    const computeCode = await loadShader("shaders/compute.wgsl");
-    const computeModule = device.createShaderModule({ code: computeCode });
-
-    computePipeline = device.createComputePipeline({
-        layout: "auto",
-        compute: { module: computeModule, entryPoint: "cs_main" }
-    });
-
-    // Bind group for storage texture
-    computeBindGroup = device.createBindGroup({
-        layout: computePipeline.getBindGroupLayout(0),
-        entries: [{ binding: 0, resource: storageTexture.createView() }]
-    });
-
-    requestAnimationFrame(frame);
-}
-
-function frame() {
-    // Update uniforms
-    const data = new Float32Array([angle, scale]);
-    device.queue.writeBuffer(uniformBuffer, 0, data);
-
-    const encoder = device.createCommandEncoder();
-
-    // ---- Compute Pass ----
-    const computePass = encoder.beginComputePass();
-    computePass.setPipeline(computePipeline);
-    computePass.setBindGroup(0, computeBindGroup);
-    computePass.dispatchWorkgroups(
-        Math.ceil(canvas.width / 8),
-        Math.ceil(canvas.height / 8)
-    );
-    computePass.end();
-
-    // ---- Render Pass ----
-    const view = context.getCurrentTexture().createView();
-    const renderPass = encoder.beginRenderPass({
-        colorAttachments: [{
-            view,
-            clearValue: { r: 1, g: 0, b: 0, a: 1 },
-            loadOp: "load",
-            storeOp: "store"
-        }]
-    });
-
-    // Set pipeline and triangle
-    renderPass.setPipeline(pipeline);
-    renderPass.setBindGroup(0, bindGroup);
-    renderPass.setVertexBuffer(0, vertexBuffer);
-    renderPass.draw(3);
-    renderPass.end();
-
-    device.queue.submit([encoder.finish()]);
-
-    requestAnimationFrame(frame);
-}
-
+// ==================== Dataset Loading ====================
 
 async function loadFixedDataset() {
     const response = await fetch("../encoder/CSVEncoder/compressed_dataset.csbd");
@@ -194,50 +15,147 @@ async function loadFixedDataset() {
     }
 
     const arrayBuffer = await response.arrayBuffer();
-    dataset = loadDatasetFromArrayBuffer(arrayBuffer);
-
-    // console.log("Dataset loaded successfully:", dataset);
-
-    // Store globally or pass to WebGPU pipeline
-    window.dataset = dataset;
-
-    return dataset;
+    const loadedDataset = loadDatasetFromArrayBuffer(arrayBuffer);
+    
+    window.dataset = loadedDataset;
+    return loadedDataset;
 }
+
+async function decodeBricksData(loadedDataset) {
+    const decodedBricks = await decodeAllRansBricks(loadedDataset);
+    decodedBricks.forEach((decoded, i) => {
+        loadedDataset.bricks[i].encodedData = decoded;
+        loadedDataset.bricks[i].encodedSize = decoded.length;
+    });
+    return loadedDataset;
+}
+
+// ==================== Application Initialization ====================
 
 async function initApp() {
     try {
-        // Load dataset
-        const dataset = await loadFixedDataset(); // this returns dataset
+        // Load and decode dataset
+        let dataset = await loadFixedDataset();
+        dataset = await decodeBricksData(dataset);
         
-        // Decode bricks (rANS) once
-        const decodedBricks = await decodeAllRansBricks(dataset);
-        decodedBricks.forEach((decoded, i) => {
-            dataset.bricks[i].encodedData = decoded;      // update each brick
-            dataset.bricks[i].encodedSize = decoded.length; // update size
-        });
-        
-        console.log("Dataset loaded:", dataset);
+        console.log("Number of bricks:", dataset.bricks.length);
+        console.log("Dataset loaded and decoded:", dataset);
 
-        // Initialize WebGPU with decoded bricks
-        initWebGPU(decodedBricks);
+        // Initialize WebGPU
+        const gpuState = await initWebGPU(dataset);
+
+        // Start render loop
+        initRenderLoop(gpuState, dataset);
+
+        setupLightingUI();
+        setupCompass(gpuState);
+
+        // Trigger a one-time GPU vs CPU validation readback
+        requestValidationOnce();
 
     } catch (err) {
-        console.error("Error loading or decoding dataset:", err);
+        console.error("Error during initialization:", err);
     }
 }
 
-let angle = 0;
-let scale = 1;
-
-window.addEventListener("keydown", (e) => {
-    if (e.key === "q" || e.key === "Q") angle += 0.05;
-    if (e.key === "e" || e.key === "E") angle -= 0.05;
-});
-
-window.addEventListener("wheel", (e) => {
-    scale += e.deltaY * -0.001;
-    scale = Math.max(0.1, scale); // clamp
-});
-
-// Call the async init function
+// Start application
 initApp();
+
+// =============== UI Wiring ===============
+
+function setupLightingUI() {
+    const lightAngleSlider = document.getElementById('light-angle-slider');
+    const gradientToggle = document.getElementById('gradient-toggle');
+    const diffuseSlider = document.getElementById('diffuse-slider');
+    const ambientSlider = document.getElementById('ambient-slider');
+    const aoStrengthSlider = document.getElementById('ao-strength-slider');
+    const shadowThresholdSlider = document.getElementById('shadow-threshold-slider');
+    const aoBlendSlider = document.getElementById('ao-blend-slider');
+
+    if (!lightAngleSlider || !gradientToggle || !diffuseSlider || !ambientSlider || !aoStrengthSlider || !shadowThresholdSlider || !aoBlendSlider) return;
+
+    const lightAngleValue = document.getElementById('light-angle-value');
+    const diffuseValue = document.getElementById('diffuse-value');
+    const ambientValue = document.getElementById('ambient-value');
+    const aoStrengthValue = document.getElementById('ao-strength-value');
+    const shadowThresholdValue = document.getElementById('shadow-threshold-value');
+    const aoBlendValue = document.getElementById('ao-blend-value');
+
+    const apply = () => {
+        lightAngleValue.textContent = `${Math.round(lightAngleSlider.value)}°`;
+        diffuseValue.textContent = Number(diffuseSlider.value).toFixed(2);
+        ambientValue.textContent = Number(ambientSlider.value).toFixed(2);
+        aoStrengthValue.textContent = Number(aoStrengthSlider.value).toFixed(2);
+        shadowThresholdValue.textContent = Number(shadowThresholdSlider.value).toFixed(2);
+        aoBlendValue.textContent = Number(aoBlendSlider.value).toFixed(2);
+
+        currentLightAngle = parseInt(lightAngleSlider.value, 10);
+
+        updateLightingOptions({
+            lightAngle: currentLightAngle,
+            gradientShadingEnabled: gradientToggle.checked,
+            diffuseStrength: parseFloat(diffuseSlider.value),
+            ambient: parseFloat(ambientSlider.value),
+            aoStrength: parseFloat(aoStrengthSlider.value),
+            shadowAlphaThreshold: parseFloat(shadowThresholdSlider.value),
+            aoBlend: parseFloat(aoBlendSlider.value)
+        });
+    };
+
+    [lightAngleSlider, gradientToggle, diffuseSlider, ambientSlider, aoStrengthSlider, shadowThresholdSlider, aoBlendSlider].forEach(control => {
+        control.addEventListener('input', apply);
+        if (control.type === 'checkbox') {
+            control.addEventListener('change', apply);
+        }
+    });
+
+    apply();
+}
+
+function headingFromVector(x, z) {
+    const deg = Math.atan2(x, -z) * 180 / Math.PI;
+    return (deg + 360) % 360;
+}
+
+function headingLabel(deg) {
+    const labels = ['North', 'North-East', 'East', 'South-East', 'South', 'South-West', 'West', 'North-West'];
+    const idx = Math.round(deg / 45) % 8;
+    return labels[idx];
+}
+
+function setupCompass(gpuState) {
+    const compass = document.getElementById('compass');
+    const camNeedle = document.getElementById('compass-camera-needle');
+    const lightNeedle = document.getElementById('compass-light-needle');
+    const camText = document.getElementById('compass-camera-text');
+    const lightText = document.getElementById('compass-light-text');
+
+    if (!compass || !camNeedle || !lightNeedle || !camText || !lightText) return;
+
+    const tick = () => {
+        // Camera heading from controller (yaw) or direction vector fallback
+        const yaw = gpuState?.cameraController?.yaw;
+        if (Number.isFinite(yaw)) {
+            const headingDeg = headingFromVector(-Math.sin(yaw), -Math.cos(yaw));
+            camNeedle.style.transform = `translate(-50%, -50%) rotate(${headingDeg}deg)`;
+            camText.textContent = headingLabel(headingDeg);
+        } else if (gpuState?.camera?.direction) {
+            const dir = gpuState.camera.direction;
+            const headingDeg = headingFromVector(dir.x, dir.z);
+            camNeedle.style.transform = `translate(-50%, -50%) rotate(${headingDeg}deg)`;
+            camText.textContent = headingLabel(headingDeg);
+        }
+
+        // Light heading from current slider angle
+        const angleRad = (currentLightAngle * Math.PI) / 180;
+        const lx = Math.sin(angleRad);
+        const lz = -Math.cos(angleRad);
+        const lightDeg = headingFromVector(lx, lz);
+        lightNeedle.style.transform = `translate(-50%, -50%) rotate(${lightDeg}deg)`;
+        lightText.textContent = `${headingLabel(lightDeg)} (${Math.round(currentLightAngle)}°)`;
+
+        requestAnimationFrame(tick);
+    };
+
+    tick();
+}

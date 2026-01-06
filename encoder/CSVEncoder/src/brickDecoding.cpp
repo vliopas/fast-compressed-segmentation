@@ -42,7 +42,7 @@ uint8_t readNibble( const std::vector<uint8_t>& encodedData, size_t& bytePos, bo
 
 std::tuple<OpType, uint8_t, uint8_t> readNextOperationAndStopBit( const std::vector<uint8_t>& encodedData, size_t& bytePos, bool& highNibbleNext)
 {
-    // 1️⃣ Read primary nibble (OpCode + stopBit)
+    // Read primary nibble (OpCode + stopBit)
     uint8_t nib = readNibble(encodedData, bytePos, highNibbleNext);
 
     uint8_t opCode = nib >> 1;   // 3-bit opcode
@@ -50,7 +50,7 @@ std::tuple<OpType, uint8_t, uint8_t> readNextOperationAndStopBit( const std::vec
 
     OpType op = static_cast<OpType>(opCode);
 
-    // 2️⃣ Optional: read delta nibble for Pδ
+    // Optional: read delta nibble for Pδ
     uint8_t delta = 0;
     if (op == OpType::PaletteBackD)
         delta = readNibble(encodedData, bytePos, highNibbleNext);
@@ -76,29 +76,51 @@ void fillSubBlock(size_t nodeMortonIdx, size_t level, size_t targetLOD, LabelTyp
 
 LabelType getNeighborValue(const std::vector<LabelType>& out, size_t level, size_t childMortonIdx, OpType op, size_t targetLOD)
 {
-    // Decode Morton index -> local (x,y,z)
+    // Decode Morton index -> 3D coordinates
     dim3 childCoords = Utils::decodeMorton3D(childMortonIdx);
 
-    // Select axis (Rx/Ry/Rz)
-    int* coord = nullptr;
-    if (op == OpType::NeighborX) coord = &childCoords.x;
-    else if (op == OpType::NeighborY) coord = &childCoords.y;
-    else if (op == OpType::NeighborZ) coord = &childCoords.z;
+    // Extract LOCAL position in the 2×2×2 sibling block
+    int lx = childCoords.x & 1;
+    int ly = childCoords.y & 1;
+    int lz = childCoords.z & 1;
 
-    // Implicit direction: outside 2×2×2 sibling block
-    // even → -1, odd → +1
-    *coord += ((*coord & 1) == 0) ? -1 : +1;
+    // Select which axis to move along based on operation type and update coordinates
+    int nx = childCoords.x;
+    int ny = childCoords.y;
+    int nz = childCoords.z;
+    
+    if (op == OpType::NeighborX)
+        nx = (lx == 0) ? childCoords.x - 1 : childCoords.x + 1;
+    else if (op == OpType::NeighborY)
+        ny = (ly == 0) ? childCoords.y - 1 : childCoords.y + 1;
+    else if (op == OpType::NeighborZ)
+        nz = (lz == 0) ? childCoords.z - 1 : childCoords.z + 1;
 
-    // Neighbor Morton index
-    size_t neighborMorton = Utils::morton3D(childCoords.x, childCoords.y, childCoords.z);
+    // Check bounds - if neighbor is outside brick, use parent of current node
+    size_t maxCoord = (1 << (level + 1)) - 1;
+    if (nx < 0 || ny < 0 || nz < 0 || nx > (int)maxCoord || ny > (int)maxCoord || nz > (int)maxCoord)
+    {
+        uint32_t parentMorton = Utils::morton3D(childCoords.x >> 1, childCoords.y >> 1, childCoords.z >> 1);
+        size_t parentOutIdx = coarseNodeToOutputIndex(parentMorton, level, targetLOD);
+        return out[parentOutIdx];
+    }
+
+    // Neighbor Morton index with adjusted coordinates
+    size_t neighborMorton = Utils::morton3D(nx, ny, nz);
 
     // Already decoded → use neighbor
     if (neighborMorton < childMortonIdx)
-        return out[coarseNodeToOutputIndex(neighborMorton, level + 1, targetLOD)];
+    {
+        size_t outIdx = coarseNodeToOutputIndex(neighborMorton, level + 1, targetLOD);
+        LabelType val = out[outIdx];
+        return val;
+    }
 
-    // Later Z → fallback to neighbor’s parent
-    uint32_t parentMorton = Utils::morton3D(childCoords.x >> 1, childCoords.y >> 1, childCoords.z >> 1);
-    return out[coarseNodeToOutputIndex(parentMorton, level, targetLOD)];
+    // Later Z → fallback to neighbor's parent
+    uint32_t parentMorton = Utils::morton3D(nx >> 1, ny >> 1, nz >> 1);
+    size_t parentOutIdx = coarseNodeToOutputIndex(parentMorton, level, targetLOD);
+    LabelType parentVal = out[parentOutIdx];
+    return parentVal;
 }
 
 inline uint32_t findSymbol(uint32_t x, const RansModel& m)

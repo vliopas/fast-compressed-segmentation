@@ -4,6 +4,26 @@
 // see: encoder/src/fileIO.hpp for reference
 // ==============================
 
+// Decode Morton code (Z-order curve) to 3D coordinates
+// Inverse of morton3D: extract x, y, z from a 30-bit Morton code
+function decodeMorton3D(code) {
+    const compact1by2 = (n) => {
+        // inverse of "spread bits" (part1by2)
+        n &= 0x9249249;
+        n = (n ^ (n >> 2)) & 0x30c30c3;
+        n = (n ^ (n >> 4)) & 0x300f00f;
+        n = (n ^ (n >> 8)) & 0x30000ff;
+        n = (n ^ (n >> 16)) & 0x3ff;
+        return n;
+    };
+
+    const x = compact1by2(code);
+    const y = compact1by2(code >> 1);
+    const z = compact1by2(code >> 2);
+
+    return { x, y, z };
+}
+
 export function loadDatasetFromArrayBuffer(arrayBuffer) {
     const view = new DataView(arrayBuffer);
     let offset = 0;
@@ -79,6 +99,14 @@ export function loadDatasetFromArrayBuffer(arrayBuffer) {
         // --- brickID ---
         brick.ID = readUInt32();
 
+        // Decode Morton code to get 3D position
+        const mortCoords = decodeMorton3D(brick.ID);
+        brick.position = {
+            x: mortCoords.x * brickSize,
+            y: mortCoords.y * brickSize,
+            z: mortCoords.z * brickSize
+        };
+
         // --- palette (uint64_t) ---
         brick.paletteSize = readUInt32();
         brick.palette = [];
@@ -95,6 +123,9 @@ export function loadDatasetFromArrayBuffer(arrayBuffer) {
 
         dataset.bricks.push(brick);
     }
+
+    // Ensure deterministic Morton order for all downstream buffers
+    dataset.bricks.sort((a, b) => a.ID - b.ID);
 
     return dataset;
 }

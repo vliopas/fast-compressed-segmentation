@@ -10,7 +10,7 @@
 using LabelType = uint64_t;
 static constexpr LabelType EMPTY_VALUE = std::numeric_limits<LabelType>::max();
 
-constexpr size_t BRICK_SIZE = 8; // Define brick size here
+constexpr size_t BRICK_SIZE = 64; // Define brick size here
 
 static constexpr uint32_t RANS_STATE_BITS = 32; // the current ANS coder state — large integer that evolves as we encode symbols
 static constexpr uint32_t RANS_LIMIT = 1u << 23; // minimum allowed value of the state before encoding a new symbol
