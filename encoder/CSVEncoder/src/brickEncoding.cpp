@@ -91,10 +91,10 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
 }
 
 
- void Encoding::updateFrequencyTables(const EncoderState& state)
+ void Encoding::updateFrequencyTables(const CompressedBrick& compressedBrick)
 {
-     auto& bytes = state.operations;
-     auto& isLeaf = state.isLeaf;
+     auto& bytes = compressedBrick.encodedData;
+     auto& isLeaf = compressedBrick.isLeaf;
 
     // Each byte holds TWO nibbles.
     size_t expectedNibbles = bytes.size() * 2;

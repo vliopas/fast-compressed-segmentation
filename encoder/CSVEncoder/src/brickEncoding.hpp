@@ -17,16 +17,6 @@ static constexpr uint32_t RANS_LIMIT = 1u << 23; // minimum allowed value of the
 static constexpr uint32_t RANS_TOTAL = 4096;   // or 8192/16384
 static constexpr uint32_t RANS_INIT = RANS_LIMIT;     // initial state
 
-struct EncoderState
-{
-    std::vector<LabelType> palette; // Current palette of labels
-    std::vector<uint8_t> operations; // Encoded operations
-    std::vector<uint8_t> isLeaf; // Is node of brick inner or leaf node?
-
-    //void emit(OpType op, bool stopBit, uint8_t delta = 0) { operations.emplace_back(OpEntry{op, delta, stopBit}); }
-    //void emit(const OpEntry& entry) { operations.push_back(entry); }
-};
-
 namespace Encoding
 {
     /**
@@ -74,7 +64,7 @@ namespace Encoding
      *  - High nibble is read first, then low nibble for each byte.
      *  - Updates internal `leafFreqTable` and `interiorFreqTable` arrays.
      */
-    void updateFrequencyTables(const EncoderState& state);
+    void updateFrequencyTables(const CompressedBrick& compressedBrick);
 
     /**
      * @brief Determine the most suitable operation for encoding a node.
@@ -108,7 +98,7 @@ namespace Encoding
         const Node& parent,
         size_t levelSize,
         dim3 nodeCoords,
-        EncoderState& state)
+        CompressedBrick& compressedBrick)
     {
         auto L = node.label;
 
@@ -198,12 +188,12 @@ namespace Encoding
         // Palette Lookup
         // ---------------------------------------------
         // Look for L in the palette
-        auto it = std::find(state.palette.begin(), state.palette.end(), L);
+        auto it = std::find(compressedBrick.palette.begin(), compressedBrick.palette.end(), L);
 
-        if (it != state.palette.end())
+        if (it != compressedBrick.palette.end())
         {
-            size_t idx = std::distance(state.palette.begin(), it);
-            size_t last = state.palette.size() - 1;
+            size_t idx = std::distance(compressedBrick.palette.begin(), it);
+            size_t last = compressedBrick.palette.size() - 1;
 
             // ---- P0: last used palette entry ----
             if (idx == last)
@@ -254,11 +244,11 @@ namespace Encoding
      *  - Packing produces a byte stream (2 nibbles per byte) for efficient storage
      */
     template<size_t b>
-    EncoderState encodeBrick(const Brick<b>& brick,
-                             std::function<void(const EncoderState&)> updateFunc = nullptr)
+    CompressedBrick encodeBrick(const Brick<b>& brick,
+                             std::function<void(const CompressedBrick&)> updateFunc = nullptr)
     {
-        EncoderState state;
-        state.palette.clear(); // Line 2: initialize empty palette
+        CompressedBrick compressedBrick;
+        compressedBrick.palette.clear(); // Line 2: initialize empty palette
 
         constexpr size_t levels = Brick<b>::Levels;
 
@@ -266,7 +256,7 @@ namespace Encoding
 
         // entry for the root node first
         const Node& root = brick.coarser(0)[0];  // single root node
-        state.palette.push_back(root.label);      // Add root label to palette
+        compressedBrick.palette.push_back(root.label);      // Add root label to palette
 
         // Encode an operation for the root node
         OpEntry rootEntry;
@@ -322,12 +312,12 @@ namespace Encoding
 
                     // Determine the best operation for this child
                     // Pseudocode line 12: "op ← bestOperation(parent, pyramid, palette, L)"
-                    OpEntry entry = bestOperation(brick, childNode, parentNode, childLevelSize, parentIdx, state);
+                    OpEntry entry = bestOperation(brick, childNode, parentNode, childLevelSize, parentIdx, compressedBrick);
 
                     // Update palette if operation requires
                     // Pseudocode line 13: "if op = Pa then palette.push(L)"
                     if (entry.op == OpType::PaletteAdvance)
-                        state.palette.push_back(L);
+                        compressedBrick.palette.push_back(L);
 
                     // Set stopBit and leaf status
                     // Pseudocode line 15: "output (op, stop)"
@@ -341,14 +331,14 @@ namespace Encoding
 
         // Pack the operations to nibbles (4-bit) for output
         auto [bytes, isLeaf] = packOperationsToNibbles(operations);
-        state.operations = std::move(bytes);
-        state.isLeaf = std::move(isLeaf);
+        compressedBrick.encodedData = std::move(bytes);
+        compressedBrick.isLeaf = std::move(isLeaf);
 
         // Optional callback to update external stream
         if (updateFunc)
-            updateFunc(state);
+            updateFunc(compressedBrick);
 
-        return state;
+        return compressedBrick;
     }
 
     RansModel buildRansModel(const FrequencyTable& rawTable);
@@ -384,18 +374,14 @@ namespace Encoding
             brick.build();
 
             // Encode operations
-            EncoderState state = encodeBrick(brick, 
+            CompressedBrick compressedBrick = encodeBrick(brick,
                                              (i % 512 == 0) ? updateFrequencyTables : nullptr);
-            //EncoderState state = encodeBrick(brick);
+            //EncoderState compressedBrick = encodeBrick(brick);
 
             // Construct compressed brick directly
-            CompressedBrick nibbleBrick{
-                .palette = std::move(state.palette),
-                .encodedData = std::move(state.operations)
-            };
 
             // Save compressed brick
-            nibbleBricks.push_back(std::move(nibbleBrick));
+            nibbleBricks.push_back(compressedBrick);
 
             //brickStates.push_back(state);
         }

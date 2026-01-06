@@ -142,6 +142,7 @@ namespace Encoding
     {
         std::vector<LabelType> palette; // Palette of labels used in the brick
         std::vector<uint8_t> encodedData; // Encoded operation data as byte stream
+        std::vector<uint8_t> isLeaf; // Is node of brick inner or leaf node?
     };
 
     using FrequencyTable = std::array<size_t, 16>; // Frequency table for 16 possible nibbles
