@@ -8,8 +8,6 @@
 
 #include <unordered_set>
 
-constexpr size_t brickSize = 8; // Define brick size here
-
 // Utility function to count unique labels in the dataset
 size_t countUniqueLabels(const std::vector<uint64_t>& data)
 {
@@ -26,7 +24,7 @@ int main() {
     std::cout << "\nTotal voxels: " << npy.data.size() << "\n";
     std::cout << "Number of unique labels: " << countUniqueLabels(npy.data) << "\n";
 
-    auto bricks = splitGridIntoBricks<brickSize>(npy);
+    auto bricks = splitGridIntoBricks<BRICK_SIZE>(npy);
     std::cout << "Number of bricks: " << bricks.size() << "\n";
 
     // auto& firstBrick = bricks[0];
@@ -38,7 +36,7 @@ int main() {
 
     Encoding::CompressedDataset loadedDataset = loadDatasetFromFile("compressed_dataset.csbd");
 
-    constexpr size_t targetLOD = Brick<brickSize>::Levels - 1;
+    constexpr size_t targetLOD = Brick<BRICK_SIZE>::Levels - 1;
 
     std::vector<LabelType> decoded;
     for (size_t i = 0; i < loadedDataset.bricks.size(); ++i)
@@ -46,10 +44,10 @@ int main() {
         auto& brick = loadedDataset.bricks[i];
 
         // entropy decode ONCE
-        brick.encodedData = decodeRansStream(brick, loadedDataset.interiorModel, loadedDataset.leafModel);
+        brick.encodedData = decodeRansStream(brick, loadedDataset.model);
 
         // 2. semantic decode (can be repeated for different LODs)
-        decoded = decodeBrick<brickSize>( brick, targetLOD);
+        decoded = decodeBrick<BRICK_SIZE>( brick, targetLOD);
 
         std::cout << "Decoded brick " << i
             << ", voxels = " << decoded.size() << "\n";

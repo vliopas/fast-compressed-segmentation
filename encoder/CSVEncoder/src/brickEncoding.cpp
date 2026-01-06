@@ -7,7 +7,7 @@
 Encoding::FrequencyTable Encoding::interiorFreqTable{};
 Encoding::FrequencyTable Encoding::leafFreqTable{};
 
-std::pair<std::vector<uint8_t>, std::vector<uint8_t>>
+std::vector<uint8_t>
 Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
 {
     // Bytes = final packed stream     (each byte = 2 nibbles)
@@ -16,11 +16,9 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
     // Always 1 entry per nibble, including delta nibbles.
 
     std::vector<uint8_t> bytes;
-    std::vector<uint8_t> isLeaf;
 
     // Reserve some memory to reduce reallocations
     bytes.reserve((operations.size() * 3) / 2);
-    isLeaf.reserve(operations.size() * 2); // worst case: 2 nibbles per op
 
 
     // ------------------------------------------------------------
@@ -32,11 +30,10 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
     // ------------------------------------------------------------
 
     // ------------------------------------------------------------
-    // Helper: push one 4-bit nibble + its leaf/interior flag
-    auto pushNibble = [&](uint8_t nib, uint8_t leafFlag)
+    // Helper: push one 4-bit nibble
+    auto pushNibble = [&](uint8_t nib)
         {
             nib &= 0x0F;                // Keep only 4 bits
-            isLeaf.push_back(leafFlag); // ALWAYS record classification
 
             if (!haveHigh)
             {
@@ -67,13 +64,13 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
         uint8_t primaryNibble = (opCode << 1) | (e.stopBit & 1);
 
         // Push primary nibble (always one)
-        pushNibble(primaryNibble, e.isLeaf ? 1 : 0);
+        pushNibble(primaryNibble);
 
         // If Pδ: push delta nibble (second nibble of the op)
         if (e.op == OpType::PaletteBackD)
         {
             uint8_t deltaNibble = e.delta & 0x0F;
-            pushNibble(deltaNibble, e.isLeaf ? 1 : 0);
+            pushNibble(deltaNibble);
         }
     }
     // ------------------------------------------------------------
@@ -86,47 +83,61 @@ Encoding::packOperationsToNibbles(const std::vector<OpEntry>& operations)
         bytes.push_back(highNib << 4); // low nibble = 0
     }
 
-    return { bytes, isLeaf };
+    return bytes;
     // ------------------------------------------------------------
 }
 
 
  void Encoding::updateFrequencyTables(const CompressedBrick& compressedBrick)
 {
+    // auto& bytes = compressedBrick.encodedData;
+    // auto& isLeaf = compressedBrick.isLeaf;
+
+    //// Each byte holds TWO nibbles.
+    //size_t expectedNibbles = bytes.size() * 2;
+
+    //// Allow last nibble to be padding:
+    //assert(isLeaf.size() == expectedNibbles ||
+    //       isLeaf.size() == expectedNibbles - 1);
+
+    //// Decode and count
+    //size_t leafIndex = 0;
+
+    //for (uint8_t b : bytes)
+    //{
+    //    uint8_t hi = b >> 4;
+    //    uint8_t lo = b & 0x0F;
+
+        //// High nibble
+        //if (leafIndex < isLeaf.size())
+        //{
+        //    if (isLeaf[leafIndex]) leafFreqTable[hi]++;
+        //    else interiorFreqTable[hi]++;
+        //    leafIndex++;
+        //}
+
+        //// Low nibble
+        //if (leafIndex < isLeaf.size())
+        //{
+        //    if (isLeaf[leafIndex]) leafFreqTable[lo]++;
+        //    else interiorFreqTable[lo]++;
+        //    leafIndex++;
+        //}
+    //}
+
      auto& bytes = compressedBrick.encodedData;
-     auto& isLeaf = compressedBrick.isLeaf;
 
-    // Each byte holds TWO nibbles.
-    size_t expectedNibbles = bytes.size() * 2;
+     for (uint8_t b : bytes)
+     {
+            uint8_t hi = b >> 4;
+            uint8_t lo = b & 0x0F;
 
-    // Allow last nibble to be padding:
-    assert(isLeaf.size() == expectedNibbles ||
-           isLeaf.size() == expectedNibbles - 1);
+            // High nibble
+            interiorFreqTable[hi]++;
 
-    // Decode and count
-    size_t leafIndex = 0;
-
-    for (uint8_t b : bytes)
-    {
-        uint8_t hi = b >> 4;
-        uint8_t lo = b & 0x0F;
-
-        // High nibble
-        if (leafIndex < isLeaf.size())
-        {
-            if (isLeaf[leafIndex]) leafFreqTable[hi]++;
-            else interiorFreqTable[hi]++;
-            leafIndex++;
-        }
-
-        // Low nibble
-        if (leafIndex < isLeaf.size())
-        {
-            if (isLeaf[leafIndex]) leafFreqTable[lo]++;
-            else interiorFreqTable[lo]++;
-            leafIndex++;
-        }
-    }
+            // Low nibble
+            interiorFreqTable[lo]++;
+     }
 }
 
 RansModel Encoding::buildRansModel(const FrequencyTable& rawTable)

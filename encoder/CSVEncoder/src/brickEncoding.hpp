@@ -20,8 +20,6 @@ namespace Encoding
      * Converts a vector of OpEntry operations into a byte stream where each
      * byte contains two 4-bit nibbles. Each nibble encodes an operation
      * (3-bit op code + 1-bit stop flag) or a delta value for PaletteBackD.
-     * A parallel array records whether each nibble corresponds to a leaf or
-     * interior node.
      *
      * The packing is performed in **Morton-order-consistent BFS**, preserving
      * the original operation sequence.
@@ -30,7 +28,6 @@ namespace Encoding
      *
      * @return std::pair<std::vector<uint8_t>, std::vector<uint8_t>>
      *         - first : Packed byte stream (2 nibbles per byte)
-     *         - second: Parallel leaf/interior flags (1 per nibble)
      *
      * @note
      *  - PaletteBackD operations generate two nibbles: primary opcode + delta nibble.
@@ -38,7 +35,7 @@ namespace Encoding
      *    its low nibble.
      *  - This function prepares data for frequency analysis and later decoding.
      */
-    std::pair<std::vector<uint8_t>, std::vector<uint8_t>> packOperationsToNibbles(const std::vector<OpEntry>& operations);
+    std::vector<uint8_t> packOperationsToNibbles(const std::vector<OpEntry>& operations);
 
     /**
      * @brief Update frequency tables for leaf and interior operations from a packed stream.
@@ -257,7 +254,6 @@ namespace Encoding
         OpEntry rootEntry;
         rootEntry.op = OpType::PaletteAdvance;    // root is always in palette
         rootEntry.stopBit = root.constantChildren ? 0x01 : 0x00;
-        rootEntry.isLeaf = (levels == 1);        // leaf if only one level
         operations.push_back(rootEntry);
 
         // --- Loop over levels from coarsest (0) to the second-to-finest (N-1) ---
@@ -317,7 +313,6 @@ namespace Encoding
                     // Set stopBit and leaf status
                     // Pseudocode line 15: "output (op, stop)"
                     entry.stopBit = stop ? 0x01 : 0x00;
-                    entry.isLeaf = (l + 1 == levels - 1); // leaf if finest level
 
                     operations.push_back(entry); // append operation to stream
                 }
@@ -325,10 +320,10 @@ namespace Encoding
         }
 
         // Pack the operations to nibbles (4-bit) for output
-        auto [bytes, isLeaf] = packOperationsToNibbles(operations);
+        auto bytes = packOperationsToNibbles(operations);
         compressedBrick.encodedData = std::move(bytes);
-        compressedBrick.isLeaf = std::move(isLeaf);
         compressedBrick.ID = brick.ID;
+        compressedBrick.nSymbols = operations.size();
 
         // Optional callback to update external stream
         if (updateFunc)
@@ -377,13 +372,13 @@ namespace Encoding
 
         // build RANS models
         RansModel interiorModel = buildRansModel(interiorFreqTable);
-        RansModel leafModel     = buildRansModel(leafFreqTable);
+        //RansModel leafModel     = buildRansModel(leafFreqTable);
 
         // rANS compress each brick
         for(auto& brick : compressedBricks)
         {
             // Flatten the nibble stream with isLeaf/interior info
-            struct SymbolEntry { uint8_t nibble; bool isInterior; };
+            struct SymbolEntry { uint8_t nibble; };
             std::vector<SymbolEntry> symbols;
 
             size_t nibIndex = 0;
@@ -393,12 +388,10 @@ namespace Encoding
                 uint8_t lo = byte & 0x0F;
 
                 // High nibble
-                if (nibIndex < brick.isLeaf.size())
-                    symbols.push_back({ hi, !brick.isLeaf[nibIndex++] }); // interior = !isLeaf
+                    symbols.push_back({ hi});
 
                 // Low nibble
-                if (nibIndex < brick.isLeaf.size())
-                    symbols.push_back({ lo, !brick.isLeaf[nibIndex++] });
+                    symbols.push_back({ lo});
             }
 
             // Encode symbols backwards
@@ -407,23 +400,17 @@ namespace Encoding
             compressedStream.reserve(brick.encodedData.size()); // rough reserve
 
             for (const auto& entry : std::views::reverse(symbols))
-            {
-                const RansModel& model = interiorModel;
-                ransEncodeSymbol(state, compressedStream, entry.nibble, model);
-            }
+                ransEncodeSymbol(state, compressedStream, entry.nibble, interiorModel);
 
             // Final flush
             ransFlush(state, compressedStream);
 
             // The output is now forward-order byte stream for decoder
             brick.encodedData = std::move(compressedStream);
-            std::reverse(brick.isLeaf.begin(), brick.isLeaf.end()); // reverse that so you forward iterate during decoding
-
         }
         
         return CompressedDataset{
-            .interiorModel = interiorModel,
-            .leafModel     = leafModel,
+            .model         = interiorModel,
             .bricks        = std::move(compressedBricks)
         };
     }

@@ -25,7 +25,7 @@ void saveDatasetToFile(const CompressedDataset& dataset,
     uint32_t magicNumber = 0x43534244; // 'CSBD'
     uint32_t version = 1;
     uint32_t numBricks = static_cast<uint32_t>(dataset.bricks.size());
-    uint32_t brickSize = 0;
+    uint32_t brickSize = BRICK_SIZE;
 
     out.write(reinterpret_cast<const char*>(&magicNumber), sizeof(magicNumber));
     out.write(reinterpret_cast<const char*>(&version), sizeof(version));
@@ -48,8 +48,8 @@ void saveDatasetToFile(const CompressedDataset& dataset,
             out.write(reinterpret_cast<const char*>(model.cumulativeFreq.data()), symbolCount * sizeof(uint32_t));
         };
 
-    writeRansModel(dataset.interiorModel);
-    writeRansModel(dataset.leafModel);
+    writeRansModel(dataset.model);
+    //writeRansModel(dataset.leafModel);
 
     // ============================================================
     // BRICKS
@@ -76,11 +76,10 @@ void saveDatasetToFile(const CompressedDataset& dataset,
         out.write(reinterpret_cast<const char*>(brick.encodedData.data()), encodedSize);
 
         // ------------------------------
-        // Leaf flags
+        // Number of symbols
         // ------------------------------
-        uint32_t leafSize = static_cast<uint32_t>(brick.isLeaf.size());
-        out.write(reinterpret_cast<const char*>(&leafSize), sizeof(leafSize));
-        out.write(reinterpret_cast<const char*>(brick.isLeaf.data()), leafSize);
+        uint32_t nSymbols = brick.nSymbols; // or compute dynamically if needed
+        out.write(reinterpret_cast<const char*>(&nSymbols), sizeof(nSymbols));
 
         // ------------------------------
         // Optional checksum
@@ -135,8 +134,8 @@ CompressedDataset loadDatasetFromFile(const std::string& filename)
             in.read(reinterpret_cast<char*>(model.cumulativeFreq.data()), symbolCount * sizeof(uint32_t));
         };
 
-    readRansModel(dataset.interiorModel);
-    readRansModel(dataset.leafModel);
+    readRansModel(dataset.model);
+    //readRansModel(dataset.leafModel);
 
     // -----------------------------
     // BRICKS
@@ -163,11 +162,10 @@ CompressedDataset loadDatasetFromFile(const std::string& filename)
         brick.encodedData.resize(encodedSize);
         in.read(reinterpret_cast<char*>(brick.encodedData.data()), encodedSize);
 
-        // --- isLeaf ---
-        uint32_t leafSize;
-        in.read(reinterpret_cast<char*>(&leafSize), sizeof(leafSize));
-        brick.isLeaf.resize(leafSize);
-        in.read(reinterpret_cast<char*>(brick.isLeaf.data()), leafSize);
+        // --- number of symbols ---
+        uint32_t nSymbols;
+        in.read(reinterpret_cast<char*>(&nSymbols), sizeof(nSymbols));
+        brick.nSymbols = nSymbols;
 
         // --- optional CRC (skip or verify) ---
         if constexpr (useChecksum)

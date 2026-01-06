@@ -10,6 +10,7 @@
 using LabelType = uint64_t;
 static constexpr LabelType EMPTY_VALUE = std::numeric_limits<LabelType>::max();
 
+constexpr size_t BRICK_SIZE = 8; // Define brick size here
 
 static constexpr uint32_t RANS_STATE_BITS = 32; // the current ANS coder state — large integer that evolves as we encode symbols
 static constexpr uint32_t RANS_LIMIT = 1u << 23; // minimum allowed value of the state before encoding a new symbol
@@ -130,7 +131,6 @@ namespace Encoding
         uint8_t delta = 0; // Only used for Pδ - ignored otherwise - in paper it is 4 bits MIGHT(?) change this later
 
         uint8_t stopBit = 0;
-        uint8_t isLeaf = 0;
     };
 
     // Pack operations into 4-bit nibbles (see section 3.3)
@@ -151,7 +151,7 @@ namespace Encoding
     {
         std::vector<LabelType> palette; // Palette of labels used in the brick
         std::vector<uint8_t> encodedData; // Encoded operation data as byte stream
-        std::vector<uint8_t> isLeaf; // Is node of brick inner or leaf node?
+        uint32_t nSymbols;
         uint32_t ID;
     };
 
@@ -173,8 +173,7 @@ namespace Encoding
 
     struct CompressedDataset
     {
-        RansModel interiorModel; 
-        RansModel leafModel;     
+        RansModel model; 
         std::vector<CompressedBrick> bricks;
     };
 

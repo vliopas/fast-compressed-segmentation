@@ -132,8 +132,7 @@ uint8_t ransDecodeSymbol(
 
 std::vector<uint8_t> decodeRansStream(
     const CompressedBrick& brick,
-    const RansModel& interiorModel,
-    const RansModel& leafModel);
+    const RansModel& interiorModell);
 
 /**
  * @brief Decode a compressed brick into a flat voxel label array.

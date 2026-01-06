@@ -60,25 +60,18 @@ std::tuple<OpType, uint8_t, uint8_t> readNextOperationAndStopBit( const std::vec
 
 void fillSubBlock(size_t nodeMortonIdx, size_t level, size_t targetLOD, LabelType label, std::vector<LabelType>& out)
 {
-    size_t l = level;        // current node level
-    size_t t = targetLOD;    // output level
+    size_t l = level;
+    size_t t = targetLOD;
 
-    // Base case: if we are at target LOD, just write the voxel
-    if (l == t)
-    {
-        size_t outIdx = coarseNodeToOutputIndex(nodeMortonIdx, l, t);
-        out[outIdx] = label;
-        return;
-    }
+    // Compute start index in output array
+    size_t startIdx = coarseNodeToOutputIndex(nodeMortonIdx, l, t);
 
-    // Compute children Morton indices
-    auto children = computeChildMortonIndices(nodeMortonIdx);
+    // Compute number of voxels in the subtree
+    size_t blockSize = 1ULL << (3 * (t - l)); // 8^(t-l) = 2^(3*(t-l))
 
-    // Recursively fill each child
-    for (size_t c = 0; c < 8; ++c)
-    {
-        fillSubBlock(children[c], l + 1, t, label, out);
-    }
+    // Fill entire block
+    for (size_t i = 0; i < blockSize; ++i)
+        out[startIdx + i] = label;
 }
 
 LabelType getNeighborValue(const std::vector<LabelType>& out, size_t level, size_t childMortonIdx, OpType op, size_t targetLOD)
@@ -135,14 +128,13 @@ uint8_t ransDecodeSymbol(uint32_t& state, const std::vector<uint8_t>& in, size_t
     return s;
 }
 
-std::vector<uint8_t> decodeRansStream(const CompressedBrick& brick, const RansModel& interiorModel, const RansModel& leafModel)
+std::vector<uint8_t> decodeRansStream(const CompressedBrick& brick, const RansModel& model)
 {
-    size_t n = brick.isLeaf.size();
     std::vector<uint8_t> repacked;
+    repacked.reserve((brick.encodedData.size() - 4 + 1) / 2); // rough estimate
 
     uint32_t state = 0;
     size_t inPos = brick.encodedData.size();
-    size_t outIdx = 0;
 
     assert(inPos >= 4);
 
@@ -151,28 +143,24 @@ std::vector<uint8_t> decodeRansStream(const CompressedBrick& brick, const RansMo
     uint32_t b1 = brick.encodedData[--inPos];
     uint32_t b2 = brick.encodedData[--inPos];
     uint32_t b3 = brick.encodedData[--inPos];
-
     state = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
 
-    // Use reverse iterator over isLeaf
-    auto it = brick.isLeaf.begin();
-
-    while (it != brick.isLeaf.end())
+    // Decode nibbles until we exhaust encodedData
+    size_t symbolsDecoded = 0;
+    while (symbolsDecoded < brick.nSymbols)
     {
-        // First decoded symbol is HIGH nibble
-        bool hiIsLeaf = *it++;
-        uint8_t hi = ransDecodeSymbol( state, brick.encodedData, inPos,  interiorModel ) & 0x0F;
+        uint8_t hi = ransDecodeSymbol(state, brick.encodedData, inPos, model) & 0x0F;
+        symbolsDecoded++;
 
         uint8_t lo = 0;
-        if (it != brick.isLeaf.end())
+        if (symbolsDecoded < brick.nSymbols)
         {
-            bool loIsLeaf = *it++;
-            lo = ransDecodeSymbol( state, brick.encodedData, inPos,  interiorModel ) & 0x0F;
+            lo = ransDecodeSymbol(state, brick.encodedData, inPos, model) & 0x0F;
+            symbolsDecoded++;
         }
 
         repacked.push_back((hi << 4) | lo);
     }
-
 
     return repacked;
 }
