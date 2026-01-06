@@ -1,0 +1,29 @@
+### C++ ###
+# Prerequisites
+*.d
+
+# Ignore bin folders
+bin/
+bin-int/
+
+
+# Ignore VS files and folders
+.vs/
+**.sln
+**.vcxproj
+**.vcxproj.filters
+**.vcxproj.user
+**.csproj
+**.pdb
+**.exe
+!premake5.exe
+
+# Compiled Object files
+**.slo
+**.lo
+**.o
+**.obj
+!Content/**/*.obj
+
+# Compiled shaders
+**.cso
