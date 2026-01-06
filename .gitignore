@@ -28,3 +28,9 @@ bin-int/
 
 # Compiled shaders
 **.cso
+
+# =========================
+# Datasets / Large files
+# =========================
+dataset/
+*.npy
