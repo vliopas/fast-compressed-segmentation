@@ -2,14 +2,13 @@
 
 // Gradient shading and AO always enabled
 
-// Enable f16 for bandwidth and register pressure reduction
-enable f16;
+// f16 disabled for compatibility with GPUs that do not support it
 
 struct DynamicBrickInfo {
     outputOffset: u32,        // Offset into outVoxels buffer
     targetLOD: u32,           // Resolution level (voxels per dimension)
     lodScale: f32,            // Precomputed: lodSize / brickSize (for fast coordinate scaling)
-    pad0: u32,                // Padding for 16-byte alignment
+    pad: u32,                 // Padding so array stride is 16 bytes
 }
 
 struct StaticBrickInfo {
@@ -18,8 +17,8 @@ struct StaticBrickInfo {
     streamOffset: u32,
     paletteOffset: u32,
     flags: u32,               // bit 0 = isEmpty (1 = empty, 0 = non-empty)
-    pad0: u32,                // Padding for 32-byte alignment
-    pad1: u32,
+    encodedSizeBytes: u32,    // Encoded byte length (kept for struct parity)
+    mortonId: u32,            // CPU-provided Morton code for validation
     pad2: u32,
 }
 
@@ -76,7 +75,7 @@ var<uniform> screen: Screen;
 var<storage, read_write> brickRequests: array<atomic<u32>>;  // GPU marks accessed bricks (1 = accessed, 0 = not accessed)
 
 @group(0) @binding(8)
-var<storage, read_write> aoHistory: array<f16>;  // Temporal AO history per pixel (f16 saves 50% bandwidth!)
+var<storage, read> paletteBuffer: array<vec2<u32>>;  // Palette for LOD 0 bricks
 
 @group(0) @binding(9)
 var<uniform> lighting: Lighting;  // Lighting and shadow/AO parameters
@@ -111,9 +110,9 @@ struct Screen {
     padding: f32,
 }
 
-// Lighting + AO controls
-// params = (ambient, shadowAlphaThreshold, aoBlend, aoStrength)
-// params2 = (gradientShadingEnabled, diffuseStrength, pad, pad)
+// Lighting controls
+// params = (ambient, unused1, unused2, unused3)
+// params2 = (unused, diffuseStrength, pad, pad)
 struct Lighting {
     lightDir: vec3<f32>,
     pad0: f32,
@@ -155,22 +154,39 @@ fn calculateLOD(brickPos: vec3<i32>, rayOrigin: vec3<f32>, maxLOD: u32) -> u32 {
 }
 
 // Get voxel color from the outVoxels buffer using brick info and local coordinates
-fn getVoxelColor(brick: DynamicBrickInfo, localCoords: vec3<u32>) -> vec4<f32> {
-    // Calculate resolution at this LOD: 2^targetLOD voxels per dimension
-    let lodSize = 1u << brick.targetLOD;
+fn getVoxelColor(brick: DynamicBrickInfo, staticInfo: StaticBrickInfo, localCoords: vec3<u32>) -> vec4<f32> {
+    // LOD system: LOD 0 = coarsest (1 voxel), LOD k = 2^k voxels per dimension
+    // Example: LOD 0 = 1 voxel, LOD 6 = 64 voxels (for brickSize=64)
+    // lodScale = 2^k / brickSize
+    // Example: LOD 0: lodScale = 1/64, LOD 6: lodScale = 64/64 = 1.0
     
-    // Fast vectorized scaling using precomputed lodScale (lodSize / brickSize)
-    // This eliminates per-sample bit shift, division, and redundant casts
-    let scaled = vec3<u32>(vec3<f32>(localCoords) * brick.lodScale);
-    let coords = min(scaled, vec3<u32>(lodSize - 1u));
+    // Special case: LOD 0 bricks (1 voxel) read directly from palette (first entry)
+    if (brick.targetLOD == 0u) {
+        let paletteIdx = staticInfo.paletteOffset;
+        let label = paletteBuffer[paletteIdx];
+        // Convert u64 label (stored as vec2<u32>) to u32 RGBA via transfer function
+        // For now, just use a simple color based on label value
+        let labelLow = label.x;
+        let r = f32((labelLow >> 0u) & 0xFFu) / 255.0;
+        let g = f32((labelLow >> 8u) & 0xFFu) / 255.0;
+        let b = f32((labelLow >> 16u) & 0xFFu) / 255.0;
+        let a = f32((labelLow >> 24u) & 0xFFu) / 255.0;
+        return vec4<f32>(r, g, b, a);
+    }
+    
+    let lodSize = 1u << brick.targetLOD;  // 2^targetLOD
+    
+    // Scale from brick-local coordinates (0..brickSize-1) to LOD coordinates (0..lodSize-1)
+    let scaled = vec3<f32>(localCoords) * brick.lodScale;
+    let coords = vec3<u32>(clamp(scaled, vec3<f32>(0.0), vec3<f32>(f32(lodSize) - 1.0)));
     
     // Use Morton ordering to find index within this brick's output range
     let localIndex = morton3D(coords.x, coords.y, coords.z);
     let globalIndex = brick.outputOffset + localIndex;
     
-    // Bounds check
+    // Bounds check - return magenta for out-of-bounds (debug aid)
     if (globalIndex >= arrayLength(&outVoxels)) {
-        return vec4<f32>(0.0);
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0); // Bright magenta = bounds error
     }
     
     let rgba = outVoxels[globalIndex];
@@ -187,10 +203,14 @@ fn getVoxelColor(brick: DynamicBrickInfo, localCoords: vec3<u32>) -> vec4<f32> {
 /// Trilinear LOD blending: smoothly interpolates between LOD levels
 /// Reduces popping at brick boundaries and cache thrashing
 fn getVoxelColorTrilinearLOD(brick: DynamicBrickInfo, localCoords: vec3<f32>) -> vec4<f32> {
-    // Convert float coords to integer for LOD0 sampling
-    let coords0 = vec3<u32>(localCoords);
-    let frac = localCoords - vec3<f32>(coords0);
     let lodSize = 1u << brick.targetLOD;
+    
+    // Scale from brick-local coordinates to LOD coordinates
+    let lodCoordsF = localCoords * brick.lodScale;
+    
+    // Convert float coords to integer for LOD sampling
+    let coords0 = vec3<u32>(lodCoordsF);
+    let frac = lodCoordsF - vec3<f32>(coords0);
     
     // Clamp fractional part for boundary safety
     let fracClamped = clamp(frac, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -253,10 +273,13 @@ fn sampleAlpha(worldVoxel: vec3<i32>) -> f32 {
         return 0.0;
     }
 
-    let brickIdx = morton3D(u32(brickCoords.x), u32(brickCoords.y), u32(brickCoords.z));
+    // Compute Morton code for this brick position
+    let mortonCode = morton3D(u32(brickCoords.x), u32(brickCoords.y), u32(brickCoords.z));
 
+    // Use Morton code directly as brick index (bricks stored in Morton order)
+    let brickIdx = mortonCode;
     if (brickIdx >= arrayLength(&brickData)) {
-        return 0.0;
+        return 0.0;  // Invalid brick index
     }
 
     let staticInfo = staticBricks[brickIdx];
@@ -266,46 +289,106 @@ fn sampleAlpha(worldVoxel: vec3<i32>) -> f32 {
 
     let brick = brickData[brickIdx];
     let brickOrigin = brickCoords * brickSizeI;
-    let localCoords = vec3<u32>(worldVoxel - brickOrigin);
-    return getVoxelColor(brick, localCoords).a;
+    let localVoxel = worldVoxel - brickOrigin;
+    let localCoords = vec3<u32>(clamp(localVoxel, vec3<i32>(0), vec3<i32>(i32(scene.brickSize) - 1)));
+    return getVoxelColor(brick, staticInfo, localCoords).a;
 }
 
 // Fast LOD-aware alpha sampling within a known brick (avoids brick lookup)
-fn sampleAlphaInBrick(brick: DynamicBrickInfo, brickOrigin: vec3<i32>, worldVoxel: vec3<i32>) -> f32 {
+fn sampleAlphaInBrick(brick: DynamicBrickInfo, staticInfo: StaticBrickInfo, brickOrigin: vec3<i32>, worldVoxel: vec3<i32>) -> f32 {
     // Bounds check against volume extent
     if (any(worldVoxel < vec3<i32>(0)) || any(worldVoxel >= vec3<i32>(i32(scene.gridSize)))) {
         return 0.0;
     }
     
-    let localCoords = vec3<u32>(worldVoxel - brickOrigin);
-    let brickSizeU = u32(scene.brickSize);
+    let localVoxel = worldVoxel - brickOrigin;
+    let brickSizeI = i32(scene.brickSize);
     
     // Check if still within the same brick
-    if (any(localCoords >= vec3<u32>(brickSizeU))) {
+    if (any(localVoxel < vec3<i32>(0)) || any(localVoxel >= vec3<i32>(brickSizeI))) {
         // Crossed brick boundary, fall back to full lookup
         return sampleAlpha(worldVoxel);
     }
     
-    return getVoxelColor(brick, localCoords).a;
+    let localCoords = vec3<u32>(clamp(localVoxel, vec3<i32>(0), vec3<i32>(brickSizeI - 1)));
+    return getVoxelColor(brick, staticInfo, localCoords).a;
 }
 
-// Cast a single shadow ray toward the light to estimate visibility (1 = clear, 0 = occluded)
-fn traceShadowRay(startPos: vec3<f32>, lightDir: vec3<f32>, alphaThreshold: f32) -> f32 {
-    const MAX_STEPS: u32 = 48u;
-    const STEP_SIZE: f32 = 1.5;
-
-    let dir = normalize(lightDir);
-    var t = STEP_SIZE;  // start slightly off the surface to avoid self-shadow
-
-    for (var i: u32 = 0u; i < MAX_STEPS; i++) {
-        let samplePos = startPos + dir * t;
-        let alpha = sampleAlpha(vec3<i32>(samplePos));
-        if (alpha > alphaThreshold) {
-            return 0.0;
-        }
-        t += STEP_SIZE;
+// Cast a shadow ray toward the light with accumulated opacity (1 = clear, 0 = fully occluded)
+// Properly integrates accumulated alpha to:
+//   - Skip shadow rays for semi-transparent voxels where shadow is barely visible
+//   - Reduce ray length based on accumulated density (thick fog doesn't cast long shadows)
+//   - Account for light transmission through previously accumulated voxels
+// 
+// NOTE: Currently samples at full resolution while rendering uses LOD
+// This can cause thin occluders to disappear at distance and light leaks through brick interiors
+// Ideally shadow rays should use LOD-aware sampling matching the render resolution
+fn traceShadowRay(startPos: vec3<f32>, normal: vec3<f32>, lightDir: vec3<f32>, accumulatedAlpha: f32, transmittance: f32) -> f32 {
+    const MAX_STEPS: u32 = 64u;           // More steps for better coverage
+    const MIN_STEPS: u32 = 24u;           // Minimum steps to ensure shadow quality
+    const BASE_STEP_SIZE: f32 = 1.0;      // Step size - increased to reduce LOD mismatch artifacts
+    
+    // Skip shadow rays entirely for semi-transparent voxels - shadow not visually significant
+    // If transmittance is < 0.1 (>90% opaque), shadow is being heavily attenuated anyway
+    if (transmittance < 0.1 || accumulatedAlpha < 0.2) {
+        return 1.0;  // Skip shadow ray, use full lighting
     }
-    return 1.0;
+    
+    // Adaptive step count based on accumulated opacity:
+    // - Transparent (low alpha): use full quality shadows
+    // - Opaque (high alpha): reduce quality since shadow is attenuated heavily
+    // But ensure we always do at least MIN_STEPS for quality
+    let stepCount = max(MIN_STEPS, u32(f32(MAX_STEPS) * transmittance));
+    
+    // lightDir points TO the light (same convention as diffuse lighting)
+    let dir = normalize(lightDir);
+    
+    // Start the shadow ray offset along the SURFACE NORMAL to avoid self-shadowing
+    // Offsetting along the normal ensures we move away from the surface regardless of light direction
+    // This fixes directional bias where negative light directions would move INTO the surface
+    let rayStart = startPos + normal * 0.6;  // Offset 0.6 voxels along surface normal
+    
+    // Start at half-step to sample voxel interiors, avoiding boundary skipping
+    // This ensures symmetric sampling regardless of ray direction
+    var t = BASE_STEP_SIZE * 0.5;
+    var accumulatedOpacity = 0.0;  // Track total occlusion along ray
+    
+    for (var i: u32 = 0u; i < stepCount; i++) {
+        let samplePos = rayStart + dir * t;
+        
+        // Check if sample position is within volume bounds
+        // If we exit the volume, we've escaped to the light (no more occlusion)
+        if (any(samplePos < vec3<f32>(0.0)) || any(samplePos >= vec3<f32>(scene.gridSize))) {
+            break;  // Exited volume - clear path to light
+        }
+        
+        // Sample the voxel containing this point
+        // floor() gives us the voxel index regardless of direction
+        // Combined with t starting at 0.5*stepSize, we sample voxel centers
+        let voxelCoord = vec3<i32>(floor(samplePos));
+        let alpha = sampleAlpha(voxelCoord);
+        
+        // Accumulate opacity: denser occlusion = darker shadow
+        // Each sample contributes based on how opaque it is
+        accumulatedOpacity += alpha * BASE_STEP_SIZE;
+        
+        // Early exit if sufficiently occluded (avoid wasting steps)
+        if (accumulatedOpacity > 0.8) {
+            return 0.0;  // Ray is fully occluded
+        }
+        
+        t += BASE_STEP_SIZE;
+    }
+    
+    // Return visibility: high accumulated opacity → low visibility → dark shadow
+    // Use exponential falloff for smoother shadow gradation
+    // Modulate shadow strength by transmittance: already-opaque areas get less shadow contribution
+    let shadowVisibility = exp(-accumulatedOpacity * 1.5);  // 1.5 controls shadow darkness falloff
+    
+    // Mix shadow with fully lit based on transmittance:
+    // - If transmittance ≈ 1.0 (fully transparent): use full shadow
+    // - If transmittance ≈ 0.0 (fully opaque): shadow barely matters, return near-1.0
+    return mix(1.0, shadowVisibility, transmittance);
 }
 
 // Compute gradient via central differences (6 neighbor samples)
@@ -337,26 +420,34 @@ fn computeGradient(worldPos: vec3<f32>) -> vec3<f32> {
 // - Stays within one brick (no morton lookups or brick boundary checks)
 // - Cost scales with LOD: close objects (LOD=6, stride=1) are expensive but cover few pixels
 //                         far objects (LOD=2, stride=16) are cheap and cover many pixels
-// Uses f16 for gradient vector to reduce register pressure (normals don't need f32 precision)
-fn computeGradientLOD(brick: DynamicBrickInfo, brickOrigin: vec3<i32>, worldPos: vec3<f32>, stride: i32) -> vec3<f16> {
+// Uses f32 for gradient vector for compatibility
+// CRITICAL FIX: Only use non-zero alpha samples for gradient to prevent invisible voxel bleeding
+fn computeGradientLOD(brick: DynamicBrickInfo, staticInfo: StaticBrickInfo, brickOrigin: vec3<i32>, worldPos: vec3<f32>, stride: i32, centerAlpha: f32) -> vec3<f32> {
     let voxelPos = vec3<i32>(worldPos);
     let offset = vec3<i32>(stride);
-    
     // Sample 6 neighbors at LOD-stride intervals (e.g., stride=16 for distant bricks)
-    // Convert to f16 immediately to save register pressure
-    let alphaXp = f16(sampleAlphaInBrick(brick, brickOrigin, voxelPos + vec3<i32>(offset.x, 0, 0)));
-    let alphaXn = f16(sampleAlphaInBrick(brick, brickOrigin, voxelPos - vec3<i32>(offset.x, 0, 0)));
-    let alphaYp = f16(sampleAlphaInBrick(brick, brickOrigin, voxelPos + vec3<i32>(0, offset.y, 0)));
-    let alphaYn = f16(sampleAlphaInBrick(brick, brickOrigin, voxelPos - vec3<i32>(0, offset.y, 0)));
-    let alphaZp = f16(sampleAlphaInBrick(brick, brickOrigin, voxelPos + vec3<i32>(0, 0, offset.z)));
-    let alphaZn = f16(sampleAlphaInBrick(brick, brickOrigin, voxelPos - vec3<i32>(0, 0, offset.z)));
+    let alphaXp = f32(sampleAlphaInBrick(brick, staticInfo, brickOrigin, voxelPos + vec3<i32>(offset.x, 0, 0)));
+    let alphaXn = f32(sampleAlphaInBrick(brick, staticInfo, brickOrigin, voxelPos - vec3<i32>(offset.x, 0, 0)));
+    let alphaYp = f32(sampleAlphaInBrick(brick, staticInfo, brickOrigin, voxelPos + vec3<i32>(0, offset.y, 0)));
+    let alphaYn = f32(sampleAlphaInBrick(brick, staticInfo, brickOrigin, voxelPos - vec3<i32>(0, offset.y, 0)));
+    let alphaZp = f32(sampleAlphaInBrick(brick, staticInfo, brickOrigin, voxelPos + vec3<i32>(0, 0, offset.z)));
+    let alphaZn = f32(sampleAlphaInBrick(brick, staticInfo, brickOrigin, voxelPos - vec3<i32>(0, 0, offset.z)));
+    
+    // If any neighbor is invisible (alpha < 0.05), treat it as having the same alpha as center
+    // This prevents gradients from pointing toward invisible regions
+    let threshold = 0.05;
+    let safeXp = select(centerAlpha, alphaXp, alphaXp > threshold);
+    let safeXn = select(centerAlpha, alphaXn, alphaXn > threshold);
+    let safeYp = select(centerAlpha, alphaYp, alphaYp > threshold);
+    let safeYn = select(centerAlpha, alphaYn, alphaYn > threshold);
+    let safeZp = select(centerAlpha, alphaZp, alphaZp > threshold);
+    let safeZn = select(centerAlpha, alphaZn, alphaZn > threshold);
     
     // Central difference: (forward - backward) / 2
-    // Note: no need to divide by stride since we only care about direction after normalization
-    return vec3<f16>(
-        (alphaXp - alphaXn) * 0.5h,
-        (alphaYp - alphaYn) * 0.5h,
-        (alphaZp - alphaZn) * 0.5h
+    return vec3<f32>(
+        (safeXp - safeXn) * 0.5,
+        (safeYp - safeYn) * 0.5,
+        (safeZp - safeZn) * 0.5
     );
 }
 
@@ -377,8 +468,12 @@ fn intersectVolume(ray: Ray) -> VolumeHit {
 }
 
 fn initDDA(ray: Ray, tEnter: f32, tExit: f32) -> DDAState {
-    let pos = ray.origin + ray.dir * tEnter;  // No bias - start exactly at boundary
-    let voxel = vec3<i32>(pos);
+    // Small adaptive bias to avoid self-intersection without skipping the entry voxel
+    // Important: keep all t values in WORLD PARAMETRIC SPACE
+    let epsilon = max(tEnter * 1e-6, 1e-5);
+    let tStart = tEnter + epsilon;
+    let pos = ray.origin + ray.dir * tStart;
+    let voxel = vec3<i32>(floor(pos));
 
     let step = vec3<i32>(
         select(0, 1, ray.dir.x > 0.0) + select(0, -1, ray.dir.x < 0.0),
@@ -386,14 +481,15 @@ fn initDDA(ray: Ray, tEnter: f32, tExit: f32) -> DDAState {
         select(0, 1, ray.dir.z > 0.0) + select(0, -1, ray.dir.z < 0.0)
     );
 
-    let nextBoundary = vec3<f32>(
+    // Compute the next voxel boundary in WORLD coordinates, then its param t from ray.origin
+    let nextBoundaryWorld = vec3<f32>(
         select(f32(voxel.x), f32(voxel.x + 1), ray.dir.x > 0.0),
         select(f32(voxel.y), f32(voxel.y + 1), ray.dir.y > 0.0),
         select(f32(voxel.z), f32(voxel.z + 1), ray.dir.z > 0.0)
     );
 
-    // Use precomputed invDir - eliminates 6 divisions!
-    let tMax = (nextBoundary - pos) * ray.invDir;
+    // Use precomputed invDir - eliminates 6 divisions! Now in WORLD param t
+    let tMax = (nextBoundaryWorld - ray.origin) * ray.invDir;
     let tDelta = abs(ray.invDir);
 
     return DDAState(voxel, tMax, tDelta, step, tExit);
@@ -418,8 +514,12 @@ fn advanceDDA(state: ptr<function, DDAState>) -> f32 {
 }
 
 fn initBrickDDA(ray: Ray, tEnter: f32, tExit: f32, brickSize: u32) -> BrickDDAState {
-    let pos = ray.origin + ray.dir * (tEnter + f32(brickSize) * 1e-4);
-    let brick = vec3<i32>(pos) / i32(brickSize);
+    // Small adaptive bias at brick entry to avoid visible seams
+    // t values in WORLD PARAMETRIC SPACE
+    let epsilon = max(tEnter * 1e-6, 1e-5);
+    let tStart = tEnter + epsilon;
+    let pos = ray.origin + ray.dir * tStart;
+    let brick = vec3<i32>(floor(pos)) / i32(brickSize);
     
     let step = vec3<i32>(
         select(0, 1, ray.dir.x > 0.0) + select(0, -1, ray.dir.x < 0.0),
@@ -428,14 +528,14 @@ fn initBrickDDA(ray: Ray, tEnter: f32, tExit: f32, brickSize: u32) -> BrickDDASt
     );
     
     let brickF = vec3<f32>(brick) * f32(brickSize);
-    let nextBrickBoundary = vec3<f32>(
+    let nextBrickBoundaryWorld = vec3<f32>(
         select(brickF.x, brickF.x + f32(brickSize), ray.dir.x > 0.0),
         select(brickF.y, brickF.y + f32(brickSize), ray.dir.y > 0.0),
         select(brickF.z, brickF.z + f32(brickSize), ray.dir.z > 0.0)
     );
     
-    // Use precomputed invDir - eliminates 6 more divisions!
-    let tMax = (nextBrickBoundary - pos) * ray.invDir;
+    // Use precomputed invDir - eliminates 6 more divisions! Now in WORLD param t
+    let tMax = (nextBrickBoundaryWorld - ray.origin) * ray.invDir;
     let tDelta = abs(vec3<f32>(f32(brickSize)) * ray.invDir);
     
     return BrickDDAState(brick, tMax, tDelta, step, tExit);
@@ -466,9 +566,28 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let screen_width = u32(screen.width);
     let screen_height = u32(screen.height);
+    
+    // if(arrayLength(&brickData) == 512)
+    // {
+    //     let rgba : u32 =
+    //     (255u << 0u)  | // R
+    //     (0u   << 8u)  | // G
+    //     (255u << 16u) | // B
+    //     (255u << 24u);  // A
 
+    //      rayTraceOutput[pixel_y * screen_width + pixel_x] = rgba;
+    //     return;
+    // }
+    // Debug: Log scene uniforms once per frame (from top-left pixel only)
+    if (pixel_x == 0u && pixel_y == 0u) {
+        // This will show in shader compilation warnings or debug output
+        // let debug = vec4<f32>(scene.gridSize, scene.brickSize, scene.bricksPerAxis, 0.0);
+    }
+
+    // Critical: Always write to output to avoid stale data artifacts
+    // Early return without writing leaves pixels with old frame data
     if (pixel_x >= screen_width || pixel_y >= screen_height) {
-        return;
+        return;  // Out of bounds - buffer should be cleared to black already
     }
 
     // Normalize pixel coordinates to NDC space (-1..1) with pixel center sampling
@@ -489,9 +608,9 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Precompute ray direction reciprocal once (eliminates 15 divisions per ray!)
     let invRayDir = vec3<f32>(
-        select(0.0, 1.0 / rayDir.x, abs(rayDir.x) > 1e-6),
-        select(0.0, 1.0 / rayDir.y, abs(rayDir.y) > 1e-6),
-        select(0.0, 1.0 / rayDir.z, abs(rayDir.z) > 1e-6)
+        sign(rayDir.x) / max(abs(rayDir.x), 1e-6),
+        sign(rayDir.y) / max(abs(rayDir.y), 1e-6),
+        sign(rayDir.z) / max(abs(rayDir.z), 1e-6)
     );
     
     let ray = Ray(camera.position, rayDir, invRayDir);
@@ -504,6 +623,7 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // AABB slab test against volume [0, GRID_SIZE)
     let volumeHit = intersectVolume(ray);
     if (!volumeHit.hit) {
+        // Ray missed volume entirely - buffer already cleared to black by compute shader
         return;
     }
 
@@ -516,7 +636,7 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let brickEnter = vec3<i32>(ray.origin + ray.dir * volumeHit.tEnter) / i32(brickSizeU32);
     let brickExit = vec3<i32>(ray.origin + ray.dir * volumeHit.tExit) / i32(brickSizeU32);
     let brickDelta = abs(brickExit - brickEnter);
-    let maxBrickCrossings = u32(brickDelta.x + brickDelta.y + brickDelta.z) + 3u;  // Manhattan distance + margin
+    let maxBrickCrossings = u32(brickDelta.x + brickDelta.y + brickDelta.z) + 6u;  // Larger margin to avoid early brick exit
     
     var brickEntryT = volumeHit.tEnter;  // Entry time for first brick
 
@@ -527,15 +647,31 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
             break;
         }
 
-        // Compute Morton index on-the-fly (bit interleaving is cheap ALU vs memory fetch)
-        let brickIdx = morton3D(u32(brickDDA.brick.x), u32(brickDDA.brick.y), u32(brickDDA.brick.z));
+        // Compute Morton code and look up actual brick index
+        let mortonCode = morton3D(u32(brickDDA.brick.x), u32(brickDDA.brick.y), u32(brickDDA.brick.z));
+
+        // Use Morton code directly as brick index (bricks stored in Morton order)
+        let brickIdx = mortonCode;
+        if (brickIdx >= arrayLength(&brickData)) {
+            // Out of range - advance to next brick
+            let t = advanceBrickDDA(&brickDDA);
+            brickEntryT = t + max(t * 1e-6, 1e-5);
+            if (t > brickDDA.tExit) {
+                break;
+            }
+            continue;
+        }
         
         if (brickIdx < arrayLength(&brickData)) {
             // Fast empty-brick check using cached static info (no palette access)
             let staticInfo = staticBricks[brickIdx];
+            let brick = brickData[brickIdx];
+
             if ((staticInfo.flags & 1u) != 0u) {  // isEmpty flag set
                 // Empty brick: skip to next brick
                 let t = advanceBrickDDA(&brickDDA);
+                // Small adaptive bias to prevent overlap
+                brickEntryT = t + max(t * 1e-6, 1e-5);
                 if (t > brickDDA.tExit) {
                     break;
                 }
@@ -553,127 +689,189 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
             
             // Entry is the start of this brick traversal (previous DDA step or initial volume entry)
             // Exit is the minimum of all three tMax values (next brick plane we'll cross)
-            let tEnterBrick = brickEntryT;
-            let tExitBrick = min(min(brickDDA.tMax.x, brickDDA.tMax.y), brickDDA.tMax.z);
+            let tEnterBrick = max(brickEntryT, volumeHit.tEnter);
+            var tExitBrick = min(min(brickDDA.tMax.x, brickDDA.tMax.y), brickDDA.tMax.z);
+
+            // Small adaptive exit bias to prevent boundary overlap
+            let exitBias = max(tExitBrick * 1e-6, 1e-5);
+            tExitBrick = max(tEnterBrick, tExitBrick - exitBias);
             
             // Initialize voxel DDA within this brick
             var voxelDDA = initDDA(ray, tEnterBrick, tExitBrick);
             
-            // OPTIMIZATION: Convert to brick-local coordinate space ONCE
-            // This eliminates repeated (voxelDDA.voxel - brickMinI) in the hot loop
-            voxelDDA.voxel = clamp(voxelDDA.voxel - brickMinI, vec3<i32>(0), vec3<i32>(i32(scene.brickSize) - 1));
-            
-            // Inner loop: traverse voxels within current brick
-            let brick = brickData[brickIdx];
             // Per-brick step cap: never step more times than voxels in this brick at its target LOD
             let lodSize = 1u << brick.targetLOD;
-            
-            // Scale DDA step size to LOD resolution (e.g., if LOD=1, step by 32 instead of 1)
-            // This converts from full-resolution (64^3) to LOD-resolution (lodSize^3) traversal
+
+            // Set stride based on LOD to avoid oversampling
+            // LOD 6 (64 voxels): stride = 1 (step every voxel)
+            // LOD 3 (8 voxels): stride = 8 (step every 8th voxel)
+            // LOD 0 (1 voxel): stride = 64 (entire brick is one voxel)
             let lodStride = i32(scene.brickSize) / i32(lodSize);
-            voxelDDA.tDelta *= f32(lodStride);  
-            voxelDDA.voxel = (voxelDDA.voxel / vec3<i32>(lodStride)) * vec3<i32>(lodStride);
+            
+            // OPTIMIZATION: Convert to brick-local coordinate space FIRST
+            // --- LOD-aware voxel DDA inside a brick ---
+            let brickSizeI = i32(scene.brickSize);
+
+            // Convert voxel to brick-local coordinates
+            voxelDDA.voxel = voxelDDA.voxel - brickMinI;
+
+            // Quantize voxel to LOD grid if stride > 1
+            if (lodStride > 1) {
+                // Align voxel to nearest LOD grid (floor to multiple of stride)
+                let lodVoxel = (voxelDDA.voxel / vec3<i32>(lodStride)) * vec3<i32>(lodStride);
+                voxelDDA.voxel = clamp(lodVoxel, vec3<i32>(0), vec3<i32>(brickSizeI - 1));
+
+                // Correct step size in world space (always positive so traversal advances correctly for both ray directions)
+                voxelDDA.tDelta = abs(ray.invDir) * vec3<f32>(f32(lodStride));
+
+                // Compute tMax correctly using **LOD-aligned voxel world position**
+                let lodWorldVoxel = vec3<f32>(brickMinI) + vec3<f32>(voxelDDA.voxel);
+                let nextBoundary = vec3<f32>(
+                    select(lodWorldVoxel.x, lodWorldVoxel.x + f32(lodStride), ray.dir.x > 0.0),
+                    select(lodWorldVoxel.y, lodWorldVoxel.y + f32(lodStride), ray.dir.y > 0.0),
+                    select(lodWorldVoxel.z, lodWorldVoxel.z + f32(lodStride), ray.dir.z > 0.0)
+                );
+
+                // Set tMax relative to LOD-aligned voxel position, not ray entry
+                voxelDDA.tMax = (nextBoundary - ray.origin) * ray.invDir;
+            } else {
+                // No LOD quantization - use natural voxel-by-voxel DDA
+                // Just clamp to brick bounds
+                voxelDDA.voxel = clamp(voxelDDA.voxel, vec3<i32>(0), vec3<i32>(brickSizeI - 1));
+            }
             
             // Opacity correction factor for variable step size
             // Larger steps need higher opacity to represent the same density
             let opacityScale = f32(lodStride);
             
-            // OPTIMIZATION: Compute tight voxel step bound based on actual ray traversal
-            // Old: 3u * lodSize (very conservative, can be 10-50x too large for grazing rays)
-            // New: Manhattan distance in LOD-space + small margin
+            // Use a bounded for-loop for stability (prevent potential infinite loops on GPU)
             let voxelEnter = ray.origin + ray.dir * tEnterBrick;
             let voxelExit = ray.origin + ray.dir * tExitBrick;
-            // Convert to brick-local LOD-space coordinates
-            let localEnter = (voxelEnter - vec3<f32>(brickMinI)) / f32(lodStride);
-            let localExit = (voxelExit - vec3<f32>(brickMinI)) / f32(lodStride);
-            let delta = abs(vec3<i32>(localExit) - vec3<i32>(localEnter));
-            let maxStepsThisBrick = u32(delta.x + delta.y + delta.z) + 3u;  // Manhattan distance + margin
             
-            let brickSizeI = i32(scene.brickSize);
+            // CRITICAL: Compute step count in local LOD-stride space to match DDA stepping
+            // voxelEnter and voxelExit are in world space; convert to brick-local LOD-stride space
+            let localEnterF = (voxelEnter - vec3<f32>(brickMinI)) / f32(lodStride);
+            let localExitF = (voxelExit - vec3<f32>(brickMinI)) / f32(lodStride);
+            
+            // Use floor for enter and ceil for exit to get conservative bounds
+            let localEnter = vec3<i32>(floor(localEnterF));
+            let localExit = vec3<i32>(ceil(localExitF));
+            let delta = abs(localExit - localEnter);
+            let maxStepsThisBrick = u32(delta.x + delta.y + delta.z) + 128u;  // Increased margin for safety
+
+            // DEBUG: For first 256 bricks, check iteration count
+            var debugStepCount = 0u;
+            var debugExitReason = 0u; // 0=none, 1=out_of_bounds, 2=t>tExit, 3=max_iters
+
             for (var voxelIter: u32 = 0u; voxelIter < maxStepsThisBrick; voxelIter++) {
-                
-                // OPTIMIZATION: Simplified bounds check in brick-local space
-                // voxelDDA.voxel is now brick-local, so just check [0, brickSize)
                 let in_bounds = !(any(voxelDDA.voxel < vec3<i32>(0)) || any(voxelDDA.voxel >= vec3<i32>(brickSizeI)));
-                
+
                 if (!in_bounds) {
                     let t = advanceDDA(&voxelDDA);
+                    if (mortonCode < 256u) {
+                        debugExitReason = 1u; // out of bounds
+                    }
                     if (t > voxelDDA.tExit) {
                         break;
                     }
                     continue;
                 }
-                
-                // OPTIMIZATION: voxelDDA.voxel is already brick-local - no subtraction needed!
+
+                let staticInfo = staticBricks[brickIdx];
                 let localCoords = vec3<u32>(voxelDDA.voxel);
-                let color = getVoxelColor(brick, localCoords);
-                
-                // Front-to-back volumetric compositing with opacity correction
-                if (color.a > 0.01) {  // Skip nearly transparent voxels
+                let color = getVoxelColor(brick, staticInfo, localCoords);
+
+                // DEBUG: Count steps for first 256 bricks
+                if (mortonCode < 256u) {
+                    debugStepCount += 1u;
+                }
+
+                // Skip completely transparent voxels (invisible labels) - don't accumulate
+                // Use higher threshold to avoid bleeding from nearly-invisible voxels
+                if (color.a > 0.05) {
                     if (!hasFirstHit) {
-                        // Reconstruct world position when needed
                         firstHitPos = vec3<f32>(brickMinI + voxelDDA.voxel) + vec3<f32>(0.5);
-                        firstHitAlpha = color.a;  // Store first hit opacity
+                        firstHitAlpha = color.a;
                         hasFirstHit = true;
                     }
-                    
-                    // Apply gradient-based shading
+
                     var shadedColor = color;
-                    
-                    // OPTIMIZATION: Only compute gradient for opaque-enough voxels
-                    // Skip gradient for transparent/semi-transparent samples (huge savings!)
-                    if (color.a > 0.3) {
-                        // Reconstruct world position for gradient computation (only when needed)
+
+                    // Only apply shading for sufficiently opaque voxels
+                    if (color.a > 0.35) {
                         let worldPos = vec3<f32>(brickMinI + voxelDDA.voxel) + vec3<f32>(0.5);
-                        
-                        // OPTIMIZATION: Use LOD-aware gradient that samples at lodStride intervals
-                        // This is dramatically cheaper and visually nearly identical since it matches
-                        // the resolution we're already rendering at
-                        // Gradient in f16 reduces register pressure with no visual impact
-                        let gradient = computeGradientLOD(brick, brickOriginI, worldPos, lodStride);
-                        let gradLen = f16(length(gradient));
-                        
-                        // OPTIMIZATION: Branchless shading to reduce warp divergence
-                        // Use step() to select between gradient normal and ray fallback
-                        let useGradient = step(0.05h, gradLen);  // 1.0 if gradLen >= 0.05, else 0.0
-                        
-                        // Compute both normals (cheap, both are normalize operations)
-                        let gradientNormal = vec3<f32>(-gradient / max(gradLen, 0.001h));  // Avoid div-by-zero
-                        let rayFallbackNormal = -normalize(rayDir);
-                        
-                        // Branchless select: use gradient normal if strong, else ray normal
-                        let normal = mix(rayFallbackNormal, gradientNormal, f32(useGradient));
-                        
-                        // Single lighting calculation path (no divergence)
-                        let lightDiffuse = f16(max(0.0, dot(normal, normalize(lighting.lightDir))));
-                        let diffuseStrength = f16(lighting.params2.y);
-                        // Attenuate fallback normal contribution (only when useGradient=0)
-                        let fallbackAttenuation = mix(0.5h, 1.0h, useGradient);
-                        let shadingFactor = f32(clamp(f16(lighting.params.x) + lightDiffuse * diffuseStrength * fallbackAttenuation, 0.3h, 2.0h));
-                        shadedColor = vec4<f32>(color.rgb * shadingFactor, color.a);
+                        let gradient = computeGradientLOD(brick, staticInfo, brickOriginI, worldPos, lodStride, color.a);
+                        let gradLen = length(gradient);
+                        let normal = vec3<f32>(-gradient / max(gradLen, 0.001));
+
+                        var shadowFactor = 1.0;
+                        if (color.a > 0.4) {
+                            let transmittance = 1.0 - hit_color.a;
+                            shadowFactor = traceShadowRay(worldPos, normal, lighting.lightDir, hit_color.a, transmittance);
+                        }
+
+                        let lightDiffuse = max(0.0, dot(normal, normalize(lighting.lightDir)));
+                        let diffuseStrength = lighting.params2.y * shadowFactor;
+                        let ambient = lighting.params.x;
+                        let isFrontFacing = lightDiffuse > 0.01;
+                        let minAmbient = select(0.1, 0.3, isFrontFacing);
+                        let shadingFactor = clamp(ambient + lightDiffuse * diffuseStrength, minAmbient, 1.0);
+                        let luminance = dot(color.rgb, vec3<f32>(0.299, 0.587, 0.114));
+                        let shadowMix = clamp(1.0 - shadowFactor, 0.0, 1.0) * 0.5;
+                        let baseColor = mix(color.rgb, vec3<f32>(luminance) * 0.8 + color.rgb * 0.2, shadowMix);
+                        shadedColor = vec4<f32>(baseColor * shadingFactor, color.a);
                     }
-                    
-                    // Correct opacity for step size: alpha_corrected = 1 - (1 - alpha)^stepSize
-                    // Approximation for small alpha: alpha_corrected ≈ alpha * stepSize
+
                     let corrected_alpha = clamp(1.0 - pow(1.0 - shadedColor.a, opacityScale), 0.0, 1.0);
-                    
-                    let src_alpha = corrected_alpha * (1.0 - hit_color.a);  // Attenuate by accumulated opacity
+                    let src_alpha = corrected_alpha * (1.0 - hit_color.a);
                     hit_color.r += shadedColor.r * src_alpha;
                     hit_color.g += shadedColor.g * src_alpha;
                     hit_color.b += shadedColor.b * src_alpha;
                     hit_color.a += src_alpha;
-                    
-                    // Early ray termination when accumulated opacity is high
+
                     if (hit_color.a > 0.95) {
                         break;
                     }
                 }
-                
+
                 let t = advanceDDA(&voxelDDA);
                 if (t > voxelDDA.tExit) {
+                    if (mortonCode < 256u) {
+                        debugExitReason = 2u; // t > tExit
+                    }
                     break;
                 }
             }
+            
+            // DEBUG: For first 256 bricks, show exit reason
+            // if (mortonCode < 256u) {
+            //     let pixel_index = pixel_y * screen_width + pixel_x;
+                
+            //     // Show why the loop exited:
+            //     // Red = out of bounds after first step
+            //     // Blue = t > tExit (ray exited brick)
+            //     // Green = hit max iterations (shouldn't happen with current limit)
+            //     // Yellow = multiple steps taken (good!)
+                
+            //     if (debugStepCount == 0u && debugExitReason == 1u) {
+            //         rayTraceOutput[pixel_index] = 0xFF0000FFu; // Red = immediately out of bounds
+            //         return;
+            //     }
+                
+            //     if (debugStepCount == 1u && debugExitReason == 2u) {
+            //         rayTraceOutput[pixel_index] = 0xFF00FFFFu; // Cyan = 1 step then t>tExit
+            //         return;
+            //     }
+                
+            //     if (debugStepCount > 1u) {
+            //         rayTraceOutput[pixel_index] = 0xFF00FF00u; // Green = multiple steps (correct!)
+            //         return;
+            //     }
+                
+            //     // Orange = something else
+            //     rayTraceOutput[pixel_index] = 0xFFFF8000u;
+            //     return;
+            // }
         }
         
         // Early termination if ray is fully opaque
@@ -683,46 +881,18 @@ fn rayTrace(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         // Advance to next brick
         let t = advanceBrickDDA(&brickDDA);
-        brickEntryT = t;  // Entry time for next brick is where current one exits
+        // Small adaptive bias to prevent overlap
+        brickEntryT = t + max(t * 1e-6, 1e-5);
         if (t > brickDDA.tExit) {
             break;
         }
     }
 
-    // Apply single-shadow-ray AO with temporal accumulation
-    // OPTIMIZATION: Skip expensive shadow rays when they won't contribute much
-    let pixel_index = pixel_y * screen_width + pixel_x;
-    if (hasFirstHit && pixel_index < arrayLength(&aoHistory)) {
-        // Calculate distance to first hit for distance-based culling
-        let hitDistance = length(firstHitPos - camera.position);
-        
-        // Skip AO in these cases (saves 48-step shadow ray per pixel!):
-        // 1. Ray already opaque (early termination) - AO won't be visible through opacity
-        // 2. First hit is very transparent - AO contribution negligible
-        // 3. First hit is very distant - AO detail not visible at that distance
-        let skipAO = (hit_color.a > 0.9) ||           // Opaque accumulated result
-                     (firstHitAlpha < 0.2) ||          // Very transparent first surface
-                     (hitDistance > scene.gridSize * 0.6);  // Distant hit (>60% of volume extent)
-        
-        if (!skipAO) {
-            let shadowVis = f16(traceShadowRay(firstHitPos, lighting.lightDir, lighting.params.y));
-            let prevAO = aoHistory[pixel_index];
-            let blendedAO = mix(prevAO, shadowVis, f16(lighting.params.z));
-            aoHistory[pixel_index] = blendedAO;
-
-            // Convert visibility to a modulation factor (convert back to f32 for final color)
-            let aoFactor = f32(mix(1.0h - f16(lighting.params.w), 1.0h, blendedAO));
-            let litFactor = max(lighting.params.x, aoFactor);
-            hit_color = vec4<f32>(hit_color.rgb * litFactor, hit_color.a);
-        } else {
-            // Skipped AO: preserve temporal history with slow decay toward full visibility
-            let prevAO = aoHistory[pixel_index];
-            let decayedAO = mix(prevAO, 1.0h, 0.05h);  // Slowly fade to no shadow
-            aoHistory[pixel_index] = decayedAO;
-        }
-    }
+    // Per-voxel shadows are already applied during compositing above
+    // No need for additional AO pass - shadows are baked into the lit color
 
     // Convert to RGBA8 and store
+    let pixel_index = pixel_y * screen_width + pixel_x;
     let rgba = 
         (u32(hit_color.x * 255.0) << 0u) |
         (u32(hit_color.y * 255.0) << 8u) |

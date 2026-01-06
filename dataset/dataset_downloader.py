@@ -27,7 +27,7 @@ ctr = [240640, 207872, 21360]   # (x, y, z) in voxels
 # Download a 3D cutout ---
 # bbox_size: spatial extent in XY (pixels)
 # z_height: number of slices in Z
-dimSize = 64    
+dimSize = 512    
 bbox_size = (dimSize, dimSize, dimSize)
 
 _, seg_3d = img_client.image_and_segmentation_cutout(

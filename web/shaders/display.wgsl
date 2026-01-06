@@ -61,5 +61,10 @@ fn fragmentMain(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let b = f32((rgba >> 16u) & 0xFFu) / 255.0;
     let a = f32((rgba >> 24u) & 0xFFu) / 255.0;
     
-    return vec4<f32>(r, g, b, a);
+    // Composite over black opaque background
+    let backgroundColor = vec3<f32>(0.0, 0.0, 0.0);
+    let volumeColor = vec3<f32>(r, g, b);
+    let composited = volumeColor * a + backgroundColor * (1.0 - a);
+    
+    return vec4<f32>(composited, 1.0);  // Always output opaque
 }

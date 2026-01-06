@@ -1,9 +1,36 @@
 import { loadDatasetFromArrayBuffer } from "./scripts/datasetLoader.js";
 import { decodeAllRansBricks } from './scripts/decode.js';
-import { initWebGPU, updateLightingOptions } from './scripts/webgpuSetup.js';
-import { initRenderLoop, requestValidationOnce } from './scripts/renderLoop.js';
+import { initWebGPU, updateLightingOptions, applyLabelVisibility, applyLabelHover, getDatasetLabels } from './scripts/webgpuSetup.js';
+import { initRenderLoop, forceFullBrickRefresh, reDecodeCachedBricks } from './scripts/renderLoop.js';
 
 let currentLightAngle = 25;
+
+// ==================== Logger Setup ====================
+import { createLogger, setLogConfig } from './scripts/logger.js';
+import DecoderValidator from './scripts/decoderValidation.js';
+const logger = createLogger('App');
+setLogConfig({ namespaces: [], level: 'off', persist: true });
+DecoderValidator.setLoggingEnabled(false);
+
+logger.log('Logger initialized');
+
+// ==================== Morton Code Utilities ====================
+
+// Decode Morton code to 3D coordinates (for debugging)
+function decodeMorton3D(code) {
+    const compact1by2 = (n) => {
+        n &= 0x9249249;
+        n = (n ^ (n >> 2)) & 0x30c30c3;
+        n = (n ^ (n >> 4)) & 0x300f00f;
+        n = (n ^ (n >> 8)) & 0x30000ff;
+        n = (n ^ (n >> 16)) & 0x3ff;
+        return n;
+    };
+    const x = compact1by2(code);
+    const y = compact1by2(code >> 1);
+    const z = compact1by2(code >> 2);
+    return { x, y, z };
+}
 
 // ==================== Dataset Loading ====================
 
@@ -16,7 +43,7 @@ async function loadFixedDataset() {
 
     const arrayBuffer = await response.arrayBuffer();
     const loadedDataset = loadDatasetFromArrayBuffer(arrayBuffer);
-    
+
     window.dataset = loadedDataset;
     return loadedDataset;
 }
@@ -37,9 +64,6 @@ async function initApp() {
         // Load and decode dataset
         let dataset = await loadFixedDataset();
         dataset = await decodeBricksData(dataset);
-        
-        console.log("Number of bricks:", dataset.bricks.length);
-        console.log("Dataset loaded and decoded:", dataset);
 
         // Initialize WebGPU
         const gpuState = await initWebGPU(dataset);
@@ -48,10 +72,7 @@ async function initApp() {
         initRenderLoop(gpuState, dataset);
 
         setupLightingUI();
-        setupCompass(gpuState);
-
-        // Trigger a one-time GPU vs CPU validation readback
-        requestValidationOnce();
+        setupLabelVisibilityUI(dataset);
 
     } catch (err) {
         console.error("Error during initialization:", err);
@@ -64,98 +85,108 @@ initApp();
 // =============== UI Wiring ===============
 
 function setupLightingUI() {
-    const lightAngleSlider = document.getElementById('light-angle-slider');
-    const gradientToggle = document.getElementById('gradient-toggle');
-    const diffuseSlider = document.getElementById('diffuse-slider');
-    const ambientSlider = document.getElementById('ambient-slider');
-    const aoStrengthSlider = document.getElementById('ao-strength-slider');
-    const shadowThresholdSlider = document.getElementById('shadow-threshold-slider');
-    const aoBlendSlider = document.getElementById('ao-blend-slider');
+    // Use default lighting values without UI controls
+    currentLightAngle = 25;
 
-    if (!lightAngleSlider || !gradientToggle || !diffuseSlider || !ambientSlider || !aoStrengthSlider || !shadowThresholdSlider || !aoBlendSlider) return;
+    updateLightingOptions({
+        lightAngle: 25,
+        diffuseStrength: 0.8,
+        ambient: 0.5
+    });
+}
 
-    const lightAngleValue = document.getElementById('light-angle-value');
-    const diffuseValue = document.getElementById('diffuse-value');
-    const ambientValue = document.getElementById('ambient-value');
-    const aoStrengthValue = document.getElementById('ao-strength-value');
-    const shadowThresholdValue = document.getElementById('shadow-threshold-value');
-    const aoBlendValue = document.getElementById('ao-blend-value');
+function setupLabelVisibilityUI(dataset) {
+    const listEl = document.getElementById('label-visibility-list');
+    const applyBtn = document.getElementById('label-visibility-apply');
+    const statusEl = document.getElementById('label-visibility-status');
 
-    const apply = () => {
-        lightAngleValue.textContent = `${Math.round(lightAngleSlider.value)}°`;
-        diffuseValue.textContent = Number(diffuseSlider.value).toFixed(2);
-        ambientValue.textContent = Number(ambientSlider.value).toFixed(2);
-        aoStrengthValue.textContent = Number(aoStrengthSlider.value).toFixed(2);
-        shadowThresholdValue.textContent = Number(shadowThresholdSlider.value).toFixed(2);
-        aoBlendValue.textContent = Number(aoBlendSlider.value).toFixed(2);
+    if (!listEl || !applyBtn || !statusEl) return;
 
-        currentLightAngle = parseInt(lightAngleSlider.value, 10);
+    const labels = getDatasetLabels();
+    if (!labels || labels.length === 0) {
+        statusEl.textContent = 'No labels detected';
+        statusEl.classList.add('error');
+        applyBtn.disabled = true;
+        return;
+    }
 
-        updateLightingOptions({
-            lightAngle: currentLightAngle,
-            gradientShadingEnabled: gradientToggle.checked,
-            diffuseStrength: parseFloat(diffuseSlider.value),
-            ambient: parseFloat(ambientSlider.value),
-            aoStrength: parseFloat(aoStrengthSlider.value),
-            shadowAlphaThreshold: parseFloat(shadowThresholdSlider.value),
-            aoBlend: parseFloat(aoBlendSlider.value)
+    const hiddenLabels = dataset.hiddenLabels || new Set();
+    dataset.hiddenLabels = hiddenLabels;
+
+
+    listEl.innerHTML = '';
+    labels.forEach((label) => {
+        const item = document.createElement('div');
+        item.className = 'label-item';
+
+        const chip = document.createElement('span');
+        chip.className = 'label-chip';
+        chip.textContent = `Label ${label.toString()}`;
+        chip.dataset.label = label.toString();
+        if (hiddenLabels.has(label)) {
+            chip.classList.add('hidden');
+        }
+
+        // Toggle visibility UI on click (crosses out the label)
+        chip.addEventListener('click', () => {
+            if (chip.classList.contains('hidden')) {
+                chip.classList.remove('hidden');
+            } else {
+                chip.classList.add('hidden');
+            }
         });
+
+        // Highlight on hover when currently visible (not hidden in UI)
+        item.addEventListener('mouseenter', () => {
+            if (!chip.classList.contains('hidden')) {
+                applyLabelHover(label);
+                reDecodeCachedBricks();
+            }
+        });
+        item.addEventListener('mouseleave', () => {
+            applyLabelHover(null);
+            reDecodeCachedBricks();
+        });
+
+        item.appendChild(chip);
+        listEl.appendChild(item);
+    });
+
+
+    // Gather hidden labels from chips with .hidden class
+    const gatherHidden = () => {
+        const set = new Set();
+        const chips = listEl.querySelectorAll('.label-chip');
+        chips.forEach((chip) => {
+            const labelVal = chip.dataset.label;
+            if (!labelVal) return;
+            if (chip.classList.contains('hidden')) {
+                set.add(BigInt(labelVal));
+            }
+        });
+        return set;
     };
 
-    [lightAngleSlider, gradientToggle, diffuseSlider, ambientSlider, aoStrengthSlider, shadowThresholdSlider, aoBlendSlider].forEach(control => {
-        control.addEventListener('input', apply);
-        if (control.type === 'checkbox') {
-            control.addEventListener('change', apply);
+    applyBtn.addEventListener('click', () => {
+        const nextHidden = gatherHidden();
+        dataset.hiddenLabels = nextHidden;
+
+        const result = applyLabelVisibility(Array.from(nextHidden));
+        if (result?.applied) {
+            statusEl.textContent = `Applied: ${result.hiddenCount}/${result.total} hidden`;
+            statusEl.classList.remove('error');
+            forceFullBrickRefresh();
+            applyLabelHover(null);
+        } else {
+            statusEl.textContent = result?.reason || 'Failed to apply';
+            statusEl.classList.add('error');
         }
     });
 
-    apply();
+    // Clear highlight if mouse leaves the list entirely
+    listEl.addEventListener('mouseleave', () => applyLabelHover(null));
+
+    statusEl.textContent = `Loaded ${labels.length} labels`;
 }
 
-function headingFromVector(x, z) {
-    const deg = Math.atan2(x, -z) * 180 / Math.PI;
-    return (deg + 360) % 360;
-}
-
-function headingLabel(deg) {
-    const labels = ['North', 'North-East', 'East', 'South-East', 'South', 'South-West', 'West', 'North-West'];
-    const idx = Math.round(deg / 45) % 8;
-    return labels[idx];
-}
-
-function setupCompass(gpuState) {
-    const compass = document.getElementById('compass');
-    const camNeedle = document.getElementById('compass-camera-needle');
-    const lightNeedle = document.getElementById('compass-light-needle');
-    const camText = document.getElementById('compass-camera-text');
-    const lightText = document.getElementById('compass-light-text');
-
-    if (!compass || !camNeedle || !lightNeedle || !camText || !lightText) return;
-
-    const tick = () => {
-        // Camera heading from controller (yaw) or direction vector fallback
-        const yaw = gpuState?.cameraController?.yaw;
-        if (Number.isFinite(yaw)) {
-            const headingDeg = headingFromVector(-Math.sin(yaw), -Math.cos(yaw));
-            camNeedle.style.transform = `translate(-50%, -50%) rotate(${headingDeg}deg)`;
-            camText.textContent = headingLabel(headingDeg);
-        } else if (gpuState?.camera?.direction) {
-            const dir = gpuState.camera.direction;
-            const headingDeg = headingFromVector(dir.x, dir.z);
-            camNeedle.style.transform = `translate(-50%, -50%) rotate(${headingDeg}deg)`;
-            camText.textContent = headingLabel(headingDeg);
-        }
-
-        // Light heading from current slider angle
-        const angleRad = (currentLightAngle * Math.PI) / 180;
-        const lx = Math.sin(angleRad);
-        const lz = -Math.cos(angleRad);
-        const lightDeg = headingFromVector(lx, lz);
-        lightNeedle.style.transform = `translate(-50%, -50%) rotate(${lightDeg}deg)`;
-        lightText.textContent = `${headingLabel(lightDeg)} (${Math.round(currentLightAngle)}°)`;
-
-        requestAnimationFrame(tick);
-    };
-
-    tick();
-}
+// compass removed

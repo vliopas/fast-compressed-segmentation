@@ -23,18 +23,23 @@ let rayTracePipeline;
 let rayTraceBindGroup;
 let rayTraceOutputBuffer;
 let screenUniformBuffer;
-let aoHistoryBuffer;
 let lightingUniformBuffer;
+let clearRayOutputPipeline;
+let clearRayOutputBindGroup;
 
 async function loadShader(url) {
     const response = await fetch(url);
     return await response.text();
 }
 
-async function setupRayTracePipeline(device, outVoxelsBuffer, brickMetadataBuffer, staticBricksBuffer, sceneUniformBuffer, cameraUniformBuffer, voxelBufferSize, brickRequestBuffer, lightingOptions = {}) {
-    // Load ray tracing shader
+async function setupRayTracePipeline(device, outVoxelsBuffer, brickMetadataBuffer, staticBricksBuffer, sceneUniformBuffer, cameraUniformBuffer, voxelBufferSize, brickRequestBuffer, paletteBuffer, lightingOptions = {}) {
+    // Load shaders
     const rayTraceCode = await loadShader("shaders/rayTrace.wgsl");
     const rayTraceModule = device.createShaderModule({ code: rayTraceCode });
+
+    const clearRayOutputCode = await loadShader("shaders/clearRayOutput.wgsl");
+    const clearRayOutputModule = device.createShaderModule({ code: clearRayOutputCode });
+    // Logging removed per request
 
     // Create output buffer for ray tracing results (RGBA8 image)
     const canvasWidth = document.getElementById("gpuCanvas").width;
@@ -45,18 +50,6 @@ async function setupRayTracePipeline(device, outVoxelsBuffer, brickMetadataBuffe
         size: rayTraceOutputSize,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
-
-    // AO history buffer (f16 per pixel for 50% bandwidth savings!)
-    // initialized to fully visible (1.0)
-    const aoHistorySize = canvasWidth * canvasHeight * 2; // f16 = 2 bytes
-    aoHistoryBuffer = device.createBuffer({
-        size: aoHistorySize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-    });
-    // Initialize with f16 values (using Uint16Array with f16 bit pattern for 1.0)
-    // f16 bit pattern for 1.0 is 0x3C00
-    const aoInit = new Uint16Array(canvasWidth * canvasHeight).fill(0x3C00);
-    device.queue.writeBuffer(aoHistoryBuffer, 0, aoInit);
 
     // Create screen uniform (width, height, aspect, padding)
     const aspect = canvasHeight === 0 ? 1 : canvasWidth / canvasHeight;
@@ -75,7 +68,7 @@ async function setupRayTracePipeline(device, outVoxelsBuffer, brickMetadataBuffe
         0.6,
         -Math.cos(angleRad)
     ];
-    const ambient = lightingOptions.ambient ?? 0.2;
+    const ambient = lightingOptions.ambient ?? 0.5;
     const shadowAlphaThreshold = lightingOptions.shadowAlphaThreshold ?? 0.2;
     const aoBlend = lightingOptions.aoBlend ?? 0.1;
     const aoStrength = lightingOptions.aoStrength ?? 0.5;
@@ -103,21 +96,42 @@ async function setupRayTracePipeline(device, outVoxelsBuffer, brickMetadataBuffe
     });
 
     // Create ray tracing bind group
+
     rayTraceBindGroup = device.createBindGroup({
         layout: rayTracePipeline.getBindGroupLayout(0),
         entries: [
-            { binding: 0, resource: { buffer: outVoxelsBuffer } },      // Decoded voxel colors
-            { binding: 1, resource: { buffer: rayTraceOutputBuffer } }, // Output image
-            { binding: 2, resource: { buffer: brickMetadataBuffer } },  // Dynamic brick info (offset, LOD)
-            { binding: 3, resource: { buffer: staticBricksBuffer } },   // Static brick info (isEmpty flag, palette, stream)
-            { binding: 4, resource: { buffer: sceneUniformBuffer } },   // Scene constants (brickSize)
-            { binding: 5, resource: { buffer: cameraUniformBuffer } },  // Camera (position, direction, fov)
-            { binding: 6, resource: { buffer: screenUniformBuffer } },  // Screen info (width, height, aspect)
-            { binding: 7, resource: { buffer: brickRequestBuffer } },   // GPU writes brick access requests
-            { binding: 8, resource: { buffer: aoHistoryBuffer } },      // Temporal AO history
-            { binding: 9, resource: { buffer: lightingUniformBuffer } } // Lighting + AO params
+            { binding: 0, resource: { buffer: outVoxelsBuffer } },
+            { binding: 1, resource: { buffer: rayTraceOutputBuffer } },
+            { binding: 2, resource: { buffer: brickMetadataBuffer } },  // No size/offset
+            { binding: 3, resource: { buffer: staticBricksBuffer } },   // No size/offset
+            { binding: 4, resource: { buffer: sceneUniformBuffer } },
+            { binding: 5, resource: { buffer: cameraUniformBuffer } },
+            { binding: 6, resource: { buffer: screenUniformBuffer } },
+            { binding: 7, resource: { buffer: brickRequestBuffer } },   // No size/offset
+            { binding: 8, resource: { buffer: paletteBuffer } },        // Palette for LOD 0 bricks
+            { binding: 9, resource: { buffer: lightingUniformBuffer } }
         ]
     });
+
+    // Create clear ray output pipeline
+    clearRayOutputPipeline = device.createComputePipeline({
+        layout: "auto",
+        compute: {
+            module: clearRayOutputModule,
+            entryPoint: "clearRayOutput"
+        }
+    });
+
+    // Create clear ray output bind group
+    clearRayOutputBindGroup = device.createBindGroup({
+        layout: clearRayOutputPipeline.getBindGroupLayout(0),
+        entries: [
+            { binding: 0, resource: { buffer: rayTraceOutputBuffer } },
+            { binding: 1, resource: { buffer: screenUniformBuffer } }
+        ]
+    });
+
+    // Logging removed per request
 
     return {
         rayTracePipeline,
@@ -125,8 +139,9 @@ async function setupRayTracePipeline(device, outVoxelsBuffer, brickMetadataBuffe
         rayTraceOutputBuffer,
         rayTraceOutputSize: { width: canvasWidth, height: canvasHeight },
         screenUniformBuffer,
-        aoHistoryBuffer,
-        lightingUniformBuffer
+        lightingUniformBuffer,
+        clearRayOutputPipeline,
+        clearRayOutputBindGroup
     };
 }
 

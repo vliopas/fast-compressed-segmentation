@@ -1,97 +1,45 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <title>WebGPU Triangle</title>
-  <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <title>WebGPU Triangle</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
-  <canvas id="gpuCanvas" width="1920" height="1080"></canvas>
-  <div class="perf-stats">
-    <span id="perf-fps" class="perf-value">-- FPS</span>
-    <span class="perf-separator">|</span>
-    <span id="perf-ms" class="perf-value">-- ms</span>
-  </div>
-  <div id="compass" class="compass">
-    <div class="compass-ring">
-      <div class="compass-label north">N</div>
-      <div class="compass-label east">E</div>
-      <div class="compass-label south">S</div>
-      <div class="compass-label west">W</div>
-      <div id="compass-camera-needle" class="compass-needle camera"></div>
-      <div id="compass-light-needle" class="compass-needle light"></div>
+    <canvas id="gpuCanvas" width="1920" height="1080"></canvas>
+    <div class="perf-stats">
+        <span id="perf-decode" class="perf-value perf-decode">Decode --</span>
+        <span class="perf-separator">|</span>
+        <span id="perf-raytrace" class="perf-value perf-raytrace">Raytrace --</span>
+        <span class="perf-separator">|</span>
+        <span id="perf-overall" class="perf-value perf-overall">Overall --</span>
     </div>
-    <div class="compass-legend">
-      <span class="legend-key camera-key">Camera</span>
-      <span id="compass-camera-text" class="legend-value">North</span>
-      <span class="legend-key light-key">Light</span>
-      <span id="compass-light-text" class="legend-value">South (0°)</span>
+    <div class="controls">
+        <div class="control-item">
+            <span class="icon">🖱️</span>
+            <span class="icon">↻</span>
+            <span>Drag to rotate</span>
+        </div>
+        <div class="control-item">
+            <span class="text-key">Shift</span>
+            <span class="plus">+</span>
+            <span class="icon">⇅</span>
+            <span>Shift + Scroll to zoom</span>
+        </div>
     </div>
-  </div>
-  <div class="controls">
-    <div class="control-item">
-      <span class="icon">🖱️</span>
-      <span class="icon">↻</span>
-      <span>Drag to rotate</span>
+    <div class="panel-row">
+        <div class="controls label-panel" id="label-panel">
+            <h3 class="panel-title">Label Visibility</h3>
+            <div class="label-list" id="label-visibility-list" aria-label="Label visibility list"></div>
+            <div class="label-panel-footer">
+                <span id="label-visibility-status" class="status-pill">Waiting for dataset…</span>
+                <button id="label-visibility-apply" type="button">Set</button>
+            </div>
+        </div>
     </div>
-    <div class="control-item">
-      <span class="text-key">Shift</span>
-      <span class="plus">+</span>
-      <span class="icon">⇅</span>
-      <span>Shift + Scroll to zoom</span>
-    </div>
-  </div>
-  <div class="controls lighting-panel" id="lighting-controls">
-    <h3 class="panel-title">Lighting & Ambient Occlusion</h3>
-    <div class="control-item">
-      <label title="Enable gradient-based surface normal lighting for realistic shading">
-        <span class="label-text">Gradient Shading <span class="help-icon">?</span></span>
-        <input id="gradient-toggle" type="checkbox" checked>
-      </label>
-    </div>
-    <div class="control-item">
-      <label title="Light direction: West (-90°) to East (+90°), rotating around the volume">
-        <span class="label-text">Light Angle <span class="help-icon">?</span></span>
-        <input id="light-angle-slider" type="range" min="-90" max="90" step="5" value="25">
-        <span id="light-angle-value">25°</span>
-      </label>
-    </div>
-    <div class="control-item">
-      <label title="Diffuse lighting intensity: Higher = stronger directional shading; Lower = softer, more uniform">
-        <span class="label-text">Diffuse Strength <span class="help-icon">?</span></span>
-        <input id="diffuse-slider" type="range" min="0.2" max="1.2" step="0.05" value="0.8">
-        <span id="diffuse-value">0.80</span>
-      </label>
-    </div>
-    <div class="control-item">
-      <label title="Base lighting level: Higher = brighter scene, less visible occlusion; Lower = darker, more pronounced AO">
-        <span class="label-text">Ambient <span class="help-icon">?</span></span>
-        <input id="ambient-slider" type="range" min="0.1" max="0.8" step="0.01" value="0.2">
-        <span id="ambient-value">0.20</span>
-      </label>
-    </div>
-    <div class="control-item">
-      <label title="Occlusion intensity: Higher = darker creases/cavities, stronger contrast; Lower = softer, subtler darkening">
-        <span class="label-text">AO Strength <span class="help-icon">?</span></span>
-        <input id="ao-strength-slider" type="range" min="0.2" max="0.8" step="0.01" value="0.45">
-        <span id="ao-strength-value">0.45</span>
-      </label>
-    </div>
-    <div class="control-item">
-      <label title="Voxel opacity to block light: Higher = only opaque voxels occlude (lighter AO); Lower = even faint voxels block (heavier AO)">
-        <span class="label-text">Shadow Threshold <span class="help-icon">?</span></span>
-        <input id="shadow-threshold-slider" type="range" min="0.1" max="0.5" step="0.01" value="0.2">
-        <span id="shadow-threshold-value">0.20</span>
-      </label>
-    </div>
-    <div class="control-item">
-      <label title="Temporal smoothing: Higher = smoother but slower to update; Lower = faster response but more flicker/noise">
-        <span class="label-text">AO Blend <span class="help-icon">?</span></span>
-        <input id="ao-blend-slider" type="range" min="0.05" max="0.3" step="0.01" value="0.1">
-        <span id="ao-blend-value">0.10</span>
-      </label>
-    </div>
-  </div>
-  <script type="module" src="app.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
+
 </html>

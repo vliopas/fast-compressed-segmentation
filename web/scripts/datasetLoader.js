@@ -96,6 +96,9 @@ export function loadDatasetFromArrayBuffer(arrayBuffer) {
     for (let i = 0; i < numBricks; i++) {
         const brick = {};
 
+        // Preserve on-disk order for validation reordering later
+        brick.originalIndex = i;
+
         // --- brickID ---
         brick.ID = readUInt32();
 

@@ -1,18 +1,22 @@
 // ==================== Data Structures ====================
 
 struct StaticBrickInfo {
-    encodedSize   : u32, // number of nibbles to read
-    paletteSize   : u32, // number of palette entries
-    streamOffset  : u32, // u32 index into nibbleStream
-    paletteOffset : u32, // u32 index into paletteBuffer
-    flags         : u32  // bit 0 = isEmpty (1 = empty, 0 = non-empty)
-};
+    nSymbols        : u32, // number of RANS symbols
+    paletteSize     : u32, // number of palette entries
+    streamOffset    : u32, // u32 index into nibbleStream
+    paletteOffset   : u32, // u32 index into paletteBuffer
+    flags           : u32, // bit 0 = isEmpty (1 = empty, 0 = non-empty)
+    encodedSizeBytes: u32, // encoded byte length (for bounds checks)
+    mortonId        : u32, // CPU-provided Morton code (for debug validation)
+    pad2            : u32  // padding for 32-byte alignment
+};  // Total: 32 bytes (8 u32s)
 
 struct DynamicBrickInfo {
     outputOffset : u32, // u32 index into outVoxels
     targetLOD    : u32, // final resolution (varies per brick)
-    lodScale     : f32  // precomputed: lodSize / brickSize (for ray marching optimization)
-};
+    lodScale     : f32, // precomputed: lodSize / brickSize (for ray marching optimization)
+    pad          : u32  // padding so array stride becomes 16 bytes (required for storage buffers)
+};  // Total: 16 bytes (4 u32s)
 
 // ==================== Constants ====================
 
@@ -29,7 +33,9 @@ const PaletteBackD   : u32 = 6u;  // Pδ - Reuse palette entry from delta positi
 
 alias LabelType = u32;
 
-const EMPTY_VALUE : u32 = 0xFFFFFFFFu; // Transparent RGBA
+// Use transparent black (alpha=0) to represent empty/uninitialized voxels.
+// This matches typical zero-initialized GPU buffers and avoids false "alreadyFilled" hits.
+const EMPTY_VALUE : u32 = 0xFFFFFFFFu;
 const WORKGROUP_SIZE : u32 = 64u;      // Keep in sync with JS dispatch and @workgroup_size
 
 // ==================== GPU Storage Bindings ====================
@@ -338,11 +344,25 @@ fn decodeBrick(
     // Bounds check work queue
     if (workIdx >= workCount) { return; }
 
+    let isLeader = localId == 0u;
+
     // Get brick index from work queue (one brick per workgroup)
     let brickIdx = workQueue[workIdx];
-    if (brickIdx >= arrayLength(&staticBricks)) { return; }
-
-    let isLeader = localId == 0u;
+    
+    // DEBUG: Check if we can access all bricks
+    let staticLen = arrayLength(&staticBricks);
+    let dynamicLen = arrayLength(&dynamicBricks);
+    
+    // If brick index is high, abort and mark top line with error
+    if (brickIdx >= staticLen || brickIdx >= dynamicLen) {
+        if (isLeader) {
+            // Write error marker across top 100 pixels: RED = can't access brick
+            for (var x: u32 = 0u; x < 100u; x++) {
+                outVoxels[x] = 0xFFFF0000u;  // Bright red line
+            }
+        }
+        return;
+    }
 
     // Leader pulls brick metadata and initializes decode state
     var reader: NibbleReader = NibbleReader(0u, 0u);
@@ -353,11 +373,30 @@ fn decodeBrick(
     let baseOut = dynamicInfo.outputOffset;
     let targetLOD = dynamicInfo.targetLOD;
     let paletteOffset = staticInfo.paletteOffset;
+    let paletteSize = staticInfo.paletteSize;
+    let streamEndBytes = (staticInfo.streamOffset * 4u) + staticInfo.encodedSizeBytes;
+
+    // Cooperatively clear the brick's output region to EMPTY_VALUE to ensure a clean slate.
+    // This prevents stale data from making 'alreadyFilled' true and skipping decoding work.
+    {
+        let totalVoxels = 1u << (3u * targetLOD);
+        let outLen = arrayLength(&outVoxels);
+        // Clamp clear count to buffer bounds to avoid OOB writes
+        let overflow = (baseOut + totalVoxels > outLen);
+        let clearCount = select(totalVoxels, outLen - baseOut, overflow);
+
+        var k: u32 = localId;
+        while (k < clearCount) {
+            outVoxels[baseOut + k] = EMPTY_VALUE;
+            k += WORKGROUP_SIZE;
+        }
+        workgroupBarrier();
+    }
 
     if (isLeader) {
         reader = NibbleReader(
-            staticInfo.streamOffset, // bytePos (u32 index into nibbleStream)
-            0u                       // highNibbleNext - start with LOW nibble to match CPU path
+            staticInfo.streamOffset * 4u, // Convert u32 index to byte offset
+            0u                            // highNibbleNext - start with LOW nibble to match CPU path
         );
 
         // Pseudocode line 1: i_p ← 0 (palette read index)
@@ -398,6 +437,10 @@ fn decodeBrick(
                 if (isLeader && !alreadyFilled) {
                     wgFillActive = 0u; // default: no fill
 
+                    // Safety: stop if we ran past encoded stream (prevents bleed into next brick)
+                    if (reader.bytePos >= streamEndBytes) {
+                        // Do nothing; keep control flow uniform
+                    } else {
                     // Pseudocode line 11: (op, stop) ← readNextOperationAndStopBit()
                     let op = readNextOperationAndStopBit(&reader);
 
@@ -418,16 +461,19 @@ fn decodeBrick(
                         }
                         case PaletteAdvance: {
                             ip += 1u;
-                            let label = paletteBuffer[paletteOffset + ip];
+                            let safeIdx = select(ip, paletteSize - 1u, ip >= paletteSize);
+                            let label = paletteBuffer[paletteOffset + safeIdx];
                             val = hashLabel(label.x, label.y);
                         }
                         case PaletteBack0: {
-                            let label = paletteBuffer[paletteOffset + ip];
+                            let safeIdx = select(ip, paletteSize - 1u, ip >= paletteSize);
+                            let label = paletteBuffer[paletteOffset + safeIdx];
                             val = hashLabel(label.x, label.y);
                         }
                         case PaletteBackD: {
                             let paletteIdx: u32 = ip - op.delta - 1u;
-                            let label = paletteBuffer[paletteOffset + paletteIdx];
+                            let safeIdx = select(paletteIdx, paletteSize - 1u, paletteIdx >= paletteSize);
+                            let label = paletteBuffer[paletteOffset + safeIdx];
                             val = hashLabel(label.x, label.y);
                         }
                         default: {
@@ -443,6 +489,7 @@ fn decodeBrick(
                         wgFillStart     = j;
                         wgFillBlockSize = 1u << (3u * (targetLOD - (l + 1u)));
                         wgFillValue     = val;
+                    }
                     }
                 }
 

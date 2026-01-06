@@ -82,12 +82,15 @@ export function calculateBrickLOD(brickCenter, brickSize, cameraPos, fov, screen
 
     // Find the finest LOD where voxels still project to >= 1 pixel
     // We want voxels as small as possible while still being >= 1 pixel on screen
+    // LOD 0 = coarsest (1 voxel total), LOD k = 2^(3*k) total voxels
     let bestLOD = 0;
-    
+
     for (let lod = 0; lod <= maxLOD; lod++) {
+        // At LOD k, brick is divided into 2^k voxels per dimension
+        // So each voxel has physical size = brickSize / 2^k
         const voxelSize = brickSize / Math.pow(2, lod);
         const screenPixels = (focalLength * voxelSize) / d;
-        
+
         // If voxel projects to >= 1 pixel, this LOD is valid
         if (screenPixels >= 1.0) {
             bestLOD = lod;  // Track this as a valid LOD
@@ -96,7 +99,7 @@ export function calculateBrickLOD(brickCenter, brickSize, cameraPos, fov, screen
             break;
         }
     }
-    
+
     return bestLOD;
 }
 
@@ -105,7 +108,7 @@ export async function calculateAllBrickLODs(bricks, camera, screenWidth, maxLOD,
     // Use Web Workers for parallel LOD calculation
     const numWorkers = navigator.hardwareConcurrency || 4;
     const workers = [];
-    
+
     // Create worker pool with module support
     for (let i = 0; i < numWorkers; i++) {
         workers.push(new Worker('scripts/lodWorker.js', { type: 'module' }));
@@ -116,12 +119,12 @@ export async function calculateAllBrickLODs(bricks, camera, screenWidth, maxLOD,
         return new Promise((resolve) => {
             const startIdx = workerIdx * batchSize;
             const endIdx = Math.min(startIdx + batchSize, bricks.length);
-            
+
             // Extract only serializable brick data (position) to avoid BigInt serialization errors
             const batch = bricks.slice(startIdx, endIdx).map(brick => ({
                 position: brick.position
             }));
-            
+
             // Handle worker response
             worker.onmessage = (event) => {
                 const results = event.data.lods.map((lod, idx) => ({
@@ -132,7 +135,7 @@ export async function calculateAllBrickLODs(bricks, camera, screenWidth, maxLOD,
                 worker.terminate();
                 resolve(results);
             };
-            
+
             // Send work to worker
             worker.postMessage({
                 bricks: batch,
@@ -143,23 +146,23 @@ export async function calculateAllBrickLODs(bricks, camera, screenWidth, maxLOD,
             });
         });
     });
-    
+
     // Wait for all workers to complete
     const allResults = await Promise.all(promises);
-    
+
     // Flatten and sort by brick index to maintain order
     const flatResults = allResults.flat().sort((a, b) => a.brickIdx - b.brickIdx);
-    
+
     // Build LOD array and compute cumulative offsets
     const lodArray = new Uint32Array(bricks.length);
     const offsetArray = new Uint32Array(bricks.length);
-    
+
     let cumulativeOffset = 0;
     for (const result of flatResults) {
         lodArray[result.brickIdx] = result.lod;
         offsetArray[result.brickIdx] = cumulativeOffset;
         cumulativeOffset += result.voxelCount;
     }
-    
+
     return { lodArray, offsetArray };
 }
