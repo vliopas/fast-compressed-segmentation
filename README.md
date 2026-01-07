@@ -15,7 +15,7 @@ The paper's descriptions of the algorithm is used as reference for structuring a
 * Download the repo or clone it
 * The repo includes already a compressed dataset at dimensions $512\times 512 \times 512$ as set in `dataset_downloader.py` (didn't go higher due to hardware limitations)
 * It is not necessary to build the **C++ Encoder** but should yo wish to, you can run `GenerateProjects.bat` (double-click) and it will generate the necessary project files to open the solution in the IDE of your choice. The project was built using Visual Studio 2022 (v142) so this might need manual tweaking in the project's properties if you use a different version of Visual Studio.
-* To run the renderer you need to **run it via a local live server**. Opening the HTML file directly (e.g. via `file://`) will cause it to crash due to browser security restrictions.
+* To **run the demo renderer** located in `web/index.html` you need to **run it via a local live server**. Opening the HTML file directly (e.g. via `file://`) will cause it to crash due to browser security restrictions.
 
 ### Using VS Code Live Server (What I used)
 

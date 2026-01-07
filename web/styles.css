@@ -6,6 +6,30 @@ body {
     color: #d4d4d4;
 }
 
+.top-header {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    background: rgba(37, 37, 38, 0.8);
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    width: fit-content;
+}
+
+.header-link {
+    color: #569cd6;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 14px;
+    transition: color 0.2s;
+}
+
+.header-link:hover {
+    color: #87ceeb;
+    text-decoration: underline;
+}
+
 #gpuCanvas {
     display: block;
     margin-bottom: 8px;
