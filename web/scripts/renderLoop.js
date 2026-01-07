@@ -502,23 +502,10 @@ function cameraHasMoved() {
 export function forceFullBrickRefresh() {
     if (!state.gpuState || !state.gpuState.brickCache) return;
 
-    state.gpuState.brickCache.rebuild();
-    state.gpuState.workCount = 0;
-    state.reset();
+    // Capture currently resident bricks so we can immediately re-decode them
+    const cachedIndices = Array.from(state.gpuState.brickCache.residency.keys());
 
-    // Invalidate dynamic brick info so stale cached offsets are not used
-    if (state.gpuState.dynamicBricksBuffer && state.dataset?.bricks?.length) {
-        const stride = 4;
-        const invalid = new Uint32Array(state.dataset.bricks.length * stride);
-        for (let i = 0; i < state.dataset.bricks.length; i++) {
-            const base = i * stride;
-            invalid[base + 0] = 0xFFFFFFFF; // mark as not cached
-            invalid[base + 1] = 0;
-            invalid[base + 2] = 0;
-            invalid[base + 3] = 0;
-        }
-        state.gpuState.device.queue.writeBuffer(state.gpuState.dynamicBricksBuffer, 0, invalid);
-    }
+    state.reset();
 
     // CRITICAL: Write EMPTY_VALUE (0xFFFFFFFF) to entire voxel buffer
     // This ensures hidden labels are truly gone, not just zeroed
@@ -539,9 +526,36 @@ export function forceFullBrickRefresh() {
         }
     }
 
-    // Clear GPU work counter
-    if (state.gpuState.workCountBuffer) {
-        state.gpuState.device.queue.writeBuffer(state.gpuState.workCountBuffer, 0, new Uint32Array([0]));
+    // Immediately re-decode all cached bricks so the next frame has data
+    if (cachedIndices.length > 0 && state.gpuState.workQueueBuffer && state.gpuState.workCountBuffer) {
+        cachedIndices.sort((a, b) => a - b);
+
+        state.bufferManager.ensureBufferPools(state.dataset.bricks.length, cachedIndices.length);
+        for (let i = 0; i < cachedIndices.length; i++) {
+            state.bufferManager.workQueuePool[i] = cachedIndices[i];
+        }
+
+        state.bufferManager.workCountBuffer[0] = cachedIndices.length;
+        state.gpuState.workCount = cachedIndices.length;
+
+        state.gpuState.device.queue.writeBuffer(
+            state.gpuState.workQueueBuffer,
+            0,
+            state.bufferManager.workQueuePool,
+            0,
+            cachedIndices.length
+        );
+        state.gpuState.device.queue.writeBuffer(
+            state.gpuState.workCountBuffer,
+            0,
+            state.bufferManager.workCountBuffer
+        );
+    } else {
+        // No cached bricks; ensure the work counter is zeroed
+        state.gpuState.workCount = 0;
+        if (state.gpuState.workCountBuffer) {
+            state.gpuState.device.queue.writeBuffer(state.gpuState.workCountBuffer, 0, new Uint32Array([0]));
+        }
     }
 }
 
