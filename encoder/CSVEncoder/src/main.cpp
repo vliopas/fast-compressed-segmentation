@@ -1,3 +1,11 @@
+/**
+ * @file main.cpp
+ * @brief Main encoder application entry point
+ *
+ * Loads a segmentation volume from .npy format, compresses it into bricks,
+ * and saves the compressed dataset to a binary file.
+ */
+
 #include <iostream>
 #include <fstream>
 
@@ -9,7 +17,11 @@
 
 #include <unordered_set>
 
-// Hash function matching decode.wgsl hashLabel()
+/**
+ * @brief Hash function for label colors matching GPU shader implementation
+ * @param label 64-bit label value
+ * @return RGBA color as packed uint32_t
+ */
 uint32_t hashLabel(uint64_t label)
 {
     if (label == 0)
@@ -35,7 +47,11 @@ uint32_t hashLabel(uint64_t label)
     return (r << 0) | (g << 8) | (b << 16) | (0xFF << 24);
 }
 
-// Utility function to count unique labels in the dataset
+/**
+ * @brief Count the number of unique labels in the dataset
+ * @param data Vector of label values
+ * @return Number of unique labels
+ */
 size_t countUniqueLabels(const std::vector<uint64_t> &data)
 {
     std::unordered_set<uint64_t> uniqueLabels;
@@ -44,6 +60,10 @@ size_t countUniqueLabels(const std::vector<uint64_t> &data)
     return uniqueLabels.size();
 }
 
+/**
+ * @brief Main function - compress and validate dataset
+ * @return Exit code (0 for success)
+ */
 int main()
 {
     NpyArray npy = loadNpy("microns_segmentation_3d.npy");
@@ -82,8 +102,8 @@ int main()
         std::vector<LabelType> decoded = decodeBrick<BRICK_SIZE>(loadedBrick, targetLOD);
 
         // Check against original brick
-        //bool brickMatches = true;
-        //for (size_t i = 0; i < bricks[brickIdx].levels[0].size(); i++)
+        // bool brickMatches = true;
+        // for (size_t i = 0; i < bricks[brickIdx].levels[0].size(); i++)
         //{
         //    if (decoded[i] != bricks[brickIdx].levels[0][i].label)
         //    {
@@ -97,7 +117,7 @@ int main()
         allDecoded.insert(allDecoded.end(), decoded.begin(), decoded.end());
     }
 
-     // Save decoded reference output to file as raw labels (for transfer function)
+    // Save decoded reference output to file as raw labels (for transfer function)
     //  std::ofstream refFile("decoded_reference.bin", std::ios::binary);
     //  for (const auto &val : allDecoded)
     //  {

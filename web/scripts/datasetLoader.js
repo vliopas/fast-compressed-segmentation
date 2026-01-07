@@ -1,11 +1,17 @@
-// ==============================
-// Binary Dataset Loader (Browser)
-// Port from C++ to JavaScript
-// see: encoder/src/fileIO.hpp for reference
-// ==============================
+/**
+ * @file datasetLoader.js
+ * @brief Binary dataset loader for compressed volumes
+ * 
+ * Loads and parses the compressed dataset format produced by the C++ encoder.
+ * Port from C++ to JavaScript - see encoder/src/fileIO.hpp for reference.
+ */
 
-// Decode Morton code (Z-order curve) to 3D coordinates
-// Inverse of morton3D: extract x, y, z from a 30-bit Morton code
+/**
+ * Decode Morton code (Z-order curve) to 3D coordinates
+ * @param {number} code - Morton-encoded index
+ * @return {{x: number, y: number, z: number}} 3D coordinates
+ * @private
+ */
 function decodeMorton3D(code) {
     const compact1by2 = (n) => {
         // inverse of "spread bits" (part1by2)
@@ -24,6 +30,12 @@ function decodeMorton3D(code) {
     return { x, y, z };
 }
 
+/**
+ * Load compressed dataset from ArrayBuffer
+ * @param {ArrayBuffer} arrayBuffer - Binary dataset data
+ * @return {Object} Parsed dataset with header, models, and bricks
+ * @throws {Error} If file format is invalid
+ */
 export function loadDatasetFromArrayBuffer(arrayBuffer) {
     const view = new DataView(arrayBuffer);
     let offset = 0;

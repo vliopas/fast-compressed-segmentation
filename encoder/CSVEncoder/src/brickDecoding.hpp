@@ -1,4 +1,12 @@
-﻿#include "types.hpp"
+﻿/**
+ * @file brickDecoding.hpp
+ * @brief Brick decompression and decoding functions
+ *
+ * Implements the decoder for hierarchical octree-encoded bricks,
+ * including rANS entropy decoding and operation interpretation.
+ */
+
+#include "types.hpp"
 #include "brick.hpp"
 #include "utils.hpp"
 
@@ -45,9 +53,9 @@ size_t coarseNodeToOutputIndex(size_t mortonL, size_t l, size_t t);
  * @return uint8_t         The 4-bit value of the next nibble.
  */
 uint8_t readNibble(
-    const std::vector<uint8_t>& encodedData,
-    size_t& bytePos,
-    bool& highNibbleNext);
+    const std::vector<uint8_t> &encodedData,
+    size_t &bytePos,
+    bool &highNibbleNext);
 
 /**
  * @brief Decode the next operation and stop-bit from the encoded stream.
@@ -73,9 +81,9 @@ uint8_t readNibble(
  *         - uint8_t  : Stop-bit (1 = fill sub-tree, 0 = continue decoding).
  */
 std::tuple<OpType, uint8_t, uint8_t> readNextOperationAndStopBit(
-    const std::vector<uint8_t>& encodedData,
-    size_t& bytePos,
-    bool& highNibbleNext);
+    const std::vector<uint8_t> &encodedData,
+    size_t &bytePos,
+    bool &highNibbleNext);
 
 /**
  * @brief Fill all voxels in a sub-tree with a single label value.
@@ -97,7 +105,7 @@ void fillSubBlock(
     size_t level,
     size_t targetLOD,
     LabelType label,
-    std::vector<LabelType>& out);
+    std::vector<LabelType> &out);
 
 /**
  * @brief Resolve a Neighbor Reuse operation (Rx, Ry, Rz) for a child node.
@@ -119,21 +127,21 @@ void fillSubBlock(
  *                      neighbor reuse operation.
  */
 LabelType getNeighborValue(
-    const std::vector<LabelType>& out,
+    const std::vector<LabelType> &out,
     size_t level,
     size_t childMortonIdx,
     OpType op,
     size_t targetLOD);
 
 uint8_t ransDecodeSymbol(
-    uint32_t& state,
-    const std::vector<uint8_t>& in,
-    size_t& inPos,
-    const RansModel& model);
+    uint32_t &state,
+    const std::vector<uint8_t> &in,
+    size_t &inPos,
+    const RansModel &model);
 
 std::vector<uint8_t> decodeRansStream(
-    const CompressedBrick& brick,
-    const RansModel& interiorModell);
+    const CompressedBrick &brick,
+    const RansModel &interiorModell);
 
 /**
  * @brief Decode a compressed brick into a flat voxel label array.
@@ -163,40 +171,41 @@ std::vector<uint8_t> decodeRansStream(
  *    without reading further operations from the stream.
  *  - PaletteBackD references the palette entry at ip - δ (0 <= δ <= 15).
  */
-template<size_t b>
-std::vector<LabelType> decodeBrick(const CompressedBrick& brick, size_t targetLOD)
+template <size_t b>
+std::vector<LabelType> decodeBrick(const CompressedBrick &brick, size_t targetLOD)
 {
-	constexpr size_t levels = Brick<b>::Levels;
-	const size_t outCount = Utils::sizeForLevel<b>(targetLOD);
-	std::vector<LabelType> out(outCount, EMPTY_VALUE);
+    constexpr size_t levels = Brick<b>::Levels;
+    const size_t outCount = Utils::sizeForLevel<b>(targetLOD);
+    std::vector<LabelType> out(outCount, EMPTY_VALUE);
 
     size_t ip = 0; // palette read index
-	size_t bytePos = 0;
+    size_t bytePos = 0;
 
     out[0] = brick.palette[ip];
 
-	bool highNibbleNext = false;
+    bool highNibbleNext = false;
 
-	for (size_t l = 0; l < levels - 1; ++l)
-	{
-		const size_t nodeCount = sizeForLevel<b>(l);
-		for (size_t mortonIdx = 0; mortonIdx < nodeCount; ++mortonIdx)
-		{
-			size_t i = coarseNodeToOutputIndex(mortonIdx, l, targetLOD);
-			// i points to first voxel in out[] corresponding to this coarse node
+    for (size_t l = 0; l < levels - 1; ++l)
+    {
+        const size_t nodeCount = sizeForLevel<b>(l);
+        for (size_t mortonIdx = 0; mortonIdx < nodeCount; ++mortonIdx)
+        {
+            size_t i = coarseNodeToOutputIndex(mortonIdx, l, targetLOD);
+            // i points to first voxel in out[] corresponding to this coarse node
 
-			// compute children indices of current node
-			auto childrenMortonIndices = computeChildMortonIndices(mortonIdx);
+            // compute children indices of current node
+            auto childrenMortonIndices = computeChildMortonIndices(mortonIdx);
 
             auto lastChildOfI = coarseNodeToOutputIndex(childrenMortonIndices[7], l + 1, targetLOD);
-            if (out[lastChildOfI] != EMPTY_VALUE) continue;
+            if (out[lastChildOfI] != EMPTY_VALUE)
+                continue;
 
             LabelType parent = out[i]; // store parent label
 
-			for (size_t childMortonIdx : childrenMortonIndices)
-			{
-				size_t j = coarseNodeToOutputIndex(childMortonIdx, l + 1, targetLOD);
-				auto [op, stop, delta] = readNextOperationAndStopBit(brick.encodedData, bytePos, highNibbleNext);
+            for (size_t childMortonIdx : childrenMortonIndices)
+            {
+                size_t j = coarseNodeToOutputIndex(childMortonIdx, l + 1, targetLOD);
+                auto [op, stop, delta] = readNextOperationAndStopBit(brick.encodedData, bytePos, highNibbleNext);
 
                 LabelType val = EMPTY_VALUE;
 
@@ -225,9 +234,9 @@ std::vector<LabelType> decodeBrick(const CompressedBrick& brick, size_t targetLO
 
                 if (stop)
                     fillSubBlock(childMortonIdx, l + 1, targetLOD, val, out);
-			}
-		}
-	}
+            }
+        }
+    }
 
     return out;
 }

@@ -1,14 +1,25 @@
 /**
- * Buffer Pool Manager
- * Manages reusable GPU buffer pools to reduce GC pressure
+ * @file bufferManager.js
+ * @brief Buffer Pool Manager for GPU memory management
+ * 
+ * Manages reusable GPU buffer pools to reduce garbage collection pressure
+ * and improve performance.
  */
 
+/**
+ * Buffer configuration constants
+ * @const
+ */
 export const BUFFER_CONFIG = {
     GROWTH_FACTOR: 1.5,
     MIN_DYNAMIC_CAP: 1024,
     MIN_WORKQUEUE_CAP: 256
 };
 
+/**
+ * @class BufferPoolManager
+ * @brief Manages reusable GPU buffer pools
+ */
 export class BufferPoolManager {
     constructor() {
         this.dynamicBrickDataPool = null;

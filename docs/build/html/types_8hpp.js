@@ -1,0 +1,46 @@
+var types_8hpp =
+[
+    [ "dim< N, T >", "structdim.html", "structdim" ],
+    [ "dim< 2, T >", "structdim_3_012_00_01_t_01_4.html", "structdim_3_012_00_01_t_01_4" ],
+    [ "dim< 3, T >", "structdim_3_013_00_01_t_01_4.html", "structdim_3_013_00_01_t_01_4" ],
+    [ "dim< 4, T >", "structdim_3_014_00_01_t_01_4.html", "structdim_3_014_00_01_t_01_4" ],
+    [ "Node", "struct_node.html", "struct_node" ],
+    [ "NpyArray", "struct_npy_array.html", "struct_npy_array" ],
+    [ "Encoding::OpEntry", "struct_encoding_1_1_op_entry.html", "struct_encoding_1_1_op_entry" ],
+    [ "Encoding::CompressedBrick", "struct_encoding_1_1_compressed_brick.html", "struct_encoding_1_1_compressed_brick" ],
+    [ "Encoding::RansModel", "struct_encoding_1_1_rans_model.html", "struct_encoding_1_1_rans_model" ],
+    [ "Encoding::CompressedDataset", "struct_encoding_1_1_compressed_dataset.html", "struct_encoding_1_1_compressed_dataset" ],
+    [ "dim2", "types_8hpp.html#a038d4ab8fa9129803efcfc35dc33e16a", null ],
+    [ "dim3", "types_8hpp.html#aadc1419958f89353ca6f4ba747aeaf58", null ],
+    [ "dim4", "types_8hpp.html#a70e7d2b2740980b22e70eaa29988cde9", null ],
+    [ "FrequencyTable", "types_8hpp.html#a1fb2a673a89db08c94e1b2059b855ad4", null ],
+    [ "LabelType", "types_8hpp.html#a2e2a3be131712f03a4ac45b4f89b608a", null ],
+    [ "Nibble", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4f", [
+      [ "N_Rp", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4fa3196944fb4aeb373d80ad1f0ed5b4a34", null ],
+      [ "N_Rx", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4fa7d7d55ac2cd0a208de65ed9137b23e82", null ],
+      [ "N_Ry", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4fa8ad8e99e230d3372b28aa1589da033b4", null ],
+      [ "N_Rz", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4faf6beba96ebe3bd6b41f64b3818ef1e71", null ],
+      [ "N_Pa", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4fa587f785a32c23378af5ebad9c5b79613", null ],
+      [ "N_P0", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4faf4b56a83c9fcbd76fc3d67a71a0350bc", null ],
+      [ "N_Pd", "types_8hpp.html#ae11eeeecb779a1b23490c0c4e020cc4fa75c2cfee43a147d1e6a9437a1ae605db", null ]
+    ] ],
+    [ "OpType", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225", [
+      [ "ParentReuse", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225abc2198dcb0b8499b47c3078590cf5f9a", null ],
+      [ "NeighborX", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225ac714e4aecbfd49ee6cd077c75e88055e", null ],
+      [ "NeighborY", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225aa1d3d39dfba596e0d8b9d589c4de8d20", null ],
+      [ "NeighborZ", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225a3de257bdb71fcb3a0d4715ba5b648ae6", null ],
+      [ "PaletteAdvance", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225a70a11748c026ccb9a9ef70c5a4d0926d", null ],
+      [ "PaletteBack0", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225a4ae49b9d0836c03513ec27d4f9331ede", null ],
+      [ "PaletteBackD", "types_8hpp.html#a3fbf19f9fafe605aa40f6d4e50374225a54becddea24ccbff6cc54d293405e006", null ]
+    ] ],
+    [ "BRICK_SIZE", "types_8hpp.html#a7de73edfaf589ccbf05c2ce5cef65825", null ],
+    [ "EMPTY_VALUE", "types_8hpp.html#af7f563bf7108666e906cffed4616d944", null ],
+    [ "interiorFreqTable", "types_8hpp.html#a072b748ce0e512f6754251ad859e1bc1", null ],
+    [ "is_power_of_two_v", "types_8hpp.html#a11b4f7305d270f6434a7541b899077a6", null ],
+    [ "leafFreqTable", "types_8hpp.html#a38c4e9a2562df57c7612cb190d637018", null ],
+    [ "LOG_TOTAL_FREQ", "types_8hpp.html#a6c01cf7b9ee20ec76d5fb7fc90fc485a", null ],
+    [ "RANS_INIT", "types_8hpp.html#a140eaa75a09ddf9206dfba0822d6af44", null ],
+    [ "RANS_LIMIT", "types_8hpp.html#af4bcb69d98fe0ba0f422d6b538565c6b", null ],
+    [ "RANS_STATE_BITS", "types_8hpp.html#a685c1de8e14c823ecf87d5de33561b9e", null ],
+    [ "RANS_TOTAL", "types_8hpp.html#a2e435f994f24aa12e8242ef443e4998c", null ]
+];

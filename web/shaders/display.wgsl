@@ -1,4 +1,10 @@
-// Display compute shader output to screen
+/**
+ * @file display.wgsl
+ * @brief Display compute shader output to screen
+ * 
+ * Vertex and fragment shaders for rendering the ray-traced output
+ * to the screen using a fullscreen triangle.
+ */
 
 @group(0) @binding(0)
 var<storage, read> rayTraceOutput: array<u32>;

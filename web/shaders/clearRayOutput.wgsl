@@ -1,5 +1,9 @@
-// Clear ray trace output buffer to black
-// This ensures no stale pixel data remains from previous frames
+/**
+ * @file clearRayOutput.wgsl
+ * @brief Clear ray trace output buffer to black
+ * 
+ * This ensures no stale pixel data remains from previous frames.
+ */
 
 @group(0) @binding(0)
 var<storage, read_write> rayTraceOutput: array<u32>;

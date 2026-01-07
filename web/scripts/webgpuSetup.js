@@ -1,4 +1,12 @@
-const COMPUTE_WORKGROUP_SIZE = 64; // keep in sync with decode.wgsl @workgroup_size
+/**
+ * @file webgpuSetup.js
+ * @brief WebGPU initialization and setup
+ * 
+ * Sets up the WebGPU rendering context, pipelines, buffers, and manages
+ * the rendering state for the volume visualization.
+ */
+
+const COMPUTE_WORKGROUP_SIZE = 64; ///< Sync with decode.wgsl @workgroup_size
 
 import { setupRayTracePipeline } from './rayTraceSetup.js';
 import { setupDisplayPipeline } from './displaySetup.js';
@@ -9,6 +17,10 @@ import { createLogger } from './logger.js';
 
 const log = createLogger('WebGPU');
 
+/**
+ * Default lighting configuration
+ * @const
+ */
 const defaultLightingOptions = {
     lightAngle: 25,  // degrees, -90 (west) to +90 (east)
     ambient: 0.5,
@@ -38,12 +50,20 @@ let labelColorsBufferRef = null;
 let baseLabelColorsData = null;
 let currentHighlightLabel = null;
 
+/**
+ * Get labels from active dataset
+ * @return {Array<number>} Array of label IDs
+ */
 export function getDatasetLabels() {
     return activeDataset?.__cachedData?.transferFunction?.labels ?? [];
 }
 
-// ==================== Utility Functions ====================
-
+/**
+ * Load shader source from URL
+ * @param {string} url - Shader file URL
+ * @return {Promise<string>} Shader source code
+ * @private
+ */
 async function loadShader(url) {
     const response = await fetch(url);
     return await response.text();
@@ -51,6 +71,12 @@ async function loadShader(url) {
 
 // ==================== GPU Setup Functions ====================
 
+/**
+ * Initialize WebGPU adapter and device
+ * @async
+ * @return {Promise<boolean>} True if successful, false otherwise
+ * @private
+ */
 async function initializeGPU() {
     // Check for WebGPU support
     if (!navigator.gpu) {

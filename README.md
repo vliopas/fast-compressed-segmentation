@@ -1,4 +1,5 @@
 # Fast Compressed Segmentation Volumes for Scientific Visualization - Implementation in code
+
 ## Introduction
 
 This is an attempt of a faithful implementation of the 2023 publication "Fast Compressed Segmentation Volumes for Scientific Visualization" by
@@ -24,8 +25,36 @@ The paper's descriptions of the algorithm is used as reference for structuring a
 4. Select **"Open with Live Server"**
 5. The app will open in your browser and run correctly
 
+## Documentation
+
+This repo includes a Doxygen configuration to generate API documentation for the *C++* encoder, *JavaScript*-*WebGPU* code, and *WGSL* shaders. The documentation `html` file is located in [docs/index.md](docs/index.md). Open it in a browser using a live server (instructions right above) to see a more thorough explanation of the classes and functions used for the project.
+
+## Results and Visual Examples
+
+### Single View
+
+![Sample 1 – Ray-marched compressed segmentation volume](img/sample_1.jpg)
+
+*Figure 1: Ray-marched visualization of the compressed segmentation volume using the WebGPU renderer. The program was tested on a 512x512x512 volume with bricks of 64x64x64 dimensions (512 bricks total)*
+
+---
+
+### Comparison Views
+
+<p align="center">
+  <img src="img/sample_2.jpg" alt="Sample 2 – Uncompressed reference" width="45%"/>
+  <img src="img/sample_3.jpg" alt="Sample 3 – Compressed reconstruction" width="45%"/>
+</p>
+
+<p align="center">
+  <em>
+    The same visualization from varying distances. Small visual differences can be observed indicating the LOD algorithm taking effect.
+  </em>
+</p>
+
+
 ## References
 
-- [Piochowiak, Max, and Carsten Dachsbacher. "Fast compressed segmentation volumes for scientific visualization." IEEE Transactions on Visualization and Computer Graphics 30.1 (2023): 12-22.](https://scispace.com/pdf/fast-compressed-segmentation-volumes-for-scientific-34j2tgnl4e.pdf)
+* [Piochowiak, Max, and Carsten Dachsbacher. "Fast compressed segmentation volumes for scientific visualization." IEEE Transactions on Visualization and Computer Graphics 30.1 (2023): 12-22.](https://scispace.com/pdf/fast-compressed-segmentation-volumes-for-scientific-34j2tgnl4e.pdf)
 
-- [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API)
+* [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API)

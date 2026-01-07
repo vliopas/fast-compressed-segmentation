@@ -1,6 +1,21 @@
-// Camera and LOD calculation system
+/**
+ * @file camera.js
+ * @brief Camera class and LOD calculation system
+ * 
+ * Provides camera management and brick level-of-detail (LOD) calculation
+ * based on distance and screen projection.
+ */
 
+/**
+ * @class Camera
+ * @brief Camera system for the volume renderer
+ */
 export class Camera {
+    /**
+     * Create a new camera
+     * @param {{x: number, y: number, z: number}} position - Camera position
+     * @param {number} fov - Field of view in radians
+     */
     constructor(position = { x: 32, y: 32, z: -50 }, fov = Math.PI / 3) {
         this.position = position;
         this.fov = fov;  // Field of view in radians
@@ -8,6 +23,11 @@ export class Camera {
         this._needsUpload = true;  // Mark for initial upload
     }
 
+    /**
+     * Update camera position and optionally direction
+     * @param {{x: number, y: number, z: number}} position - New position
+     * @param {{x: number, y: number, z: number}|null} direction - New direction (optional)
+     */
     update(position, direction = null) {
         this.position = position;
         if (direction) {
@@ -16,6 +36,10 @@ export class Camera {
         this._needsUpload = true;
     }
 
+    /**
+     * Point camera at a target position
+     * @param {{x: number, y: number, z: number}} target - Target position
+     */
     lookAt(target) {
         const dir = normalize({
             x: target.x - this.position.x,
@@ -66,7 +90,16 @@ function cross(a, b) {
     };
 }
 
-// Calculate which LOD a brick should be decoded at based on distance and screen projection
+/**
+ * Calculate which LOD a brick should be decoded at based on distance and screen projection
+ * @param {{x: number, y: number, z: number}} brickCenter - Brick center position
+ * @param {number} brickSize - Size of the brick
+ * @param {{x: number, y: number, z: number}} cameraPos - Camera position
+ * @param {number} fov - Field of view in radians
+ * @param {number} screenWidth - Screen width in pixels
+ * @param {number} maxLOD - Maximum LOD level
+ * @return {number} LOD level (0 = finest, maxLOD = coarsest)
+ */
 export function calculateBrickLOD(brickCenter, brickSize, cameraPos, fov, screenWidth, maxLOD) {
     // Distance from camera to brick center
     const dx = brickCenter.x - cameraPos.x;

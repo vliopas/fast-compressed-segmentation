@@ -1,3 +1,11 @@
+/**
+ * @file decode.wgsl
+ * @brief GPU compute shader for decoding compressed bricks
+ * 
+ * Implements the WebGPU decoder for hierarchical octree-compressed bricks.
+ * Includes rANS decoding and operation interpretation on the GPU.
+ */
+
 // ==================== Data Structures ====================
 
 struct StaticBrickInfo {

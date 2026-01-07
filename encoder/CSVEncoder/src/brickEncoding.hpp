@@ -1,3 +1,12 @@
+/**
+ * @file brickEncoding.hpp
+ * @brief Brick compression and encoding functions
+ *
+ * Implements the hierarchical octree encoding algorithm with operation
+ * prediction (parent reuse, neighbor prediction, palette lookback) and
+ * rANS entropy coding.
+ */
+
 #include "types.hpp"
 #include "brick.hpp"
 
@@ -14,26 +23,37 @@ using RansModel = Encoding::RansModel;
 
 namespace Encoding
 {
-    // Global operation statistics
+    /**
+     * @brief Statistics for encoding operations
+     */
     struct OperationStats
     {
-        size_t parentReuse = 0;
-        size_t neighborXPos = 0; // +X neighbor
-        size_t neighborXNeg = 0; // -X neighbor
-        size_t neighborYPos = 0; // +Y neighbor
-        size_t neighborYNeg = 0; // -Y neighbor
-        size_t neighborZPos = 0; // +Z neighbor
-        size_t neighborZNeg = 0; // -Z neighbor
-        size_t paletteAdvance = 0;
-        size_t paletteBack0 = 0;
-        size_t paletteBackD = 0;
+        size_t parentReuse = 0;    ///< Rp operations
+        size_t neighborXPos = 0;   ///< +X neighbor
+        size_t neighborXNeg = 0;   ///< -X neighbor
+        size_t neighborYPos = 0;   ///< +Y neighbor
+        size_t neighborYNeg = 0;   ///< -Y neighbor
+        size_t neighborZPos = 0;   ///< +Z neighbor
+        size_t neighborZNeg = 0;   ///< -Z neighbor
+        size_t paletteAdvance = 0; ///< Pa operations
+        size_t paletteBack0 = 0;   ///< P0 operations
+        size_t paletteBackD = 0;   ///< Pδ operations
 
+        /**
+         * @brief Get total operation count
+         * @return Total number of operations
+         */
         size_t total() const
         {
             return parentReuse + neighborXPos + neighborXNeg + neighborYPos + neighborYNeg +
                    neighborZPos + neighborZNeg + paletteAdvance + paletteBack0 + paletteBackD;
         }
 
+        /**
+         * @brief Increment counter for specific operation type
+         * @param op Operation type to increment
+         * @param nodeCoords Node coordinates (for directional neighbor stats)
+         */
         void increment(OpType op, dim3 nodeCoords = {0, 0, 0})
         {
             switch (op)
@@ -71,6 +91,9 @@ namespace Encoding
             }
         }
 
+        /**
+         * @brief Log statistics to console
+         */
         void logStats() const
         {
             std::cout << "\n========== Encoding Operation Statistics ==========\n";

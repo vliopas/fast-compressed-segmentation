@@ -1,3 +1,12 @@
+/**
+ * @file brick.hpp
+ * @brief Brick pyramid structure for multi-resolution hierarchical representation
+ *
+ * This file defines the Brick template class that represents a spatial brick
+ * as a pyramid of multiple levels of detail (LOD). Each brick contains nodes
+ * organized in a hierarchy from finest to coarsest resolution.
+ */
+
 #pragma once
 
 #include "types.hpp"
@@ -7,8 +16,12 @@
 #include <unordered_map>
 #include <stdexcept>
 
-// Helper function to compute majority vote among 8 labels
-inline LabelType majorityVote8(const LabelType* labels)
+/**
+ * @brief Compute majority vote among 8 child labels
+ * @param labels Array of 8 label values
+ * @return The most frequent label among the 8 values
+ */
+inline LabelType majorityVote8(const LabelType *labels)
 {
     // count occurrences
     std::unordered_map<LabelType, int> freq;
@@ -17,36 +30,51 @@ inline LabelType majorityVote8(const LabelType* labels)
 
     // return the most frequent label
     return std::max_element(
-        freq.begin(), freq.end(),
-        [](auto& a, auto& b){ return a.second < b.second; }
-    )->first;
+               freq.begin(), freq.end(),
+               [](auto &a, auto &b)
+               { return a.second < b.second; })
+        ->first;
 }
 
-// Pyramid structure for multi-resolution representation - represents a single brick at multiple levels
-template<size_t b> // Brick size is b^3
-requires is_power_of_two_v<b> // Ensure size is a power of two
+/**
+ * @brief Pyramid structure for multi-resolution representation of a single brick
+ * @tparam b Brick size (must be a power of two), total voxels = b^3
+ *
+ * Represents a single spatial brick at multiple levels of detail (LOD).
+ * Level 0 is the finest resolution, level (Levels-1) is the coarsest.
+ */
+template <size_t b>
+    requires is_power_of_two_v<b>
 struct Brick
 {
-    static constexpr size_t Levels = std::bit_width(b); // Number of levels in the pyramid is log2(b)
+    static constexpr size_t Levels = std::bit_width(b); ///< Number of pyramid levels = log2(b)
 
-    std::array<std::vector<Node>, Levels> levels; // L_0 finest -> L_N coarsest level
+    std::array<std::vector<Node>, Levels> levels; ///< L_0 (finest) -> L_N (coarsest)
 
-    uint32_t ID;
+    uint32_t ID; ///< Unique brick identifier (typically Morton code)
 
-    // Access level from finest
-    // returns the l-th finest level (0 = finest)
-    // this respects the ordering of the paper where L0 is the finest level
-    const std::vector<Node>& level(size_t l) const { return levels[l]; }
-    std::vector<Node>& level(size_t l) { return levels[l]; }
+    /**
+     * @brief Access level from finest ordering
+     * @param l Level index (0 = finest)
+     * @return Reference to the level's node vector
+     */
+    const std::vector<Node> &level(size_t l) const { return levels[l]; }
+    std::vector<Node> &level(size_t l) { return levels[l]; }
 
-    // Access level from coarsest
-    // returns the L-th coarsest level (0 = coarsest)
-    // this goes reverse to respect the paper ordering
-    // its more intuitive to use however for traversing from coarsest to finest (encoding order)
-    const std::vector<Node>& coarser(size_t l) const { return levels[Levels - 1 - l]; }
-    std::vector<Node>& coarser(size_t l) { return levels[Levels - 1 - l]; }
+    /**
+     * @brief Access level from coarsest ordering
+     * @param l Level index (0 = coarsest)
+     * @return Reference to the level's node vector
+     */
+    const std::vector<Node> &coarser(size_t l) const { return levels[Levels - 1 - l]; }
+    std::vector<Node> &coarser(size_t l) { return levels[Levels - 1 - l]; }
 
-    // Build all the pyramid levels of the brick
+    /**
+     * @brief Build all pyramid levels from finest to coarsest
+     *
+     * Assumes level 0 (finest) is already initialized.
+     * Builds each coarser level using majority voting of child nodes.
+     */
     void build()
     {
         // Level 0 already initiliazed via splitting voxel grid to individual bricks (0th level - finest)
@@ -54,10 +82,13 @@ struct Brick
         // Build higher levels (level 1 to N-1 - finer to coarser)
         for (size_t level = 1; level < Brick<b>::Levels; level++)
             buildLevel(level);
-
     }
 
 private:
+    /**
+     * @brief Build a single pyramid level from its children
+     * @param level Level index to build (must be > 0)
+     */
     void buildLevel(size_t level)
     {
         assert(level > 0); // level 0 is already initialized
@@ -68,13 +99,13 @@ private:
         for (size_t mortonIdx = 0; mortonIdx < nodeCount; ++mortonIdx)
         {
             auto childrenMortonIndices = Utils::computeChildMortonIndices(mortonIdx);
-            
+
             LabelType childLabels[8];
             bool childConstant[8];
 
             for (int c = 0; c < 8; ++c)
             {
-                const Node& child = levels[level - 1][childrenMortonIndices[c]];
+                const Node &child = levels[level - 1][childrenMortonIndices[c]];
                 childLabels[c] = child.label;
                 childConstant[c] = child.constantChildren;
             }
@@ -87,13 +118,20 @@ private:
                 allSame &= (childLabels[i] == majLabel && childConstant[i]);
             }
 
-            levels[level][mortonIdx] = { majLabel, allSame };
+            levels[level][mortonIdx] = {majLabel, allSame};
         }
     }
 };
 
+/**
+ * @brief Split a 3D voxel grid into spatial bricks
+ * @tparam b Brick size (each brick is b^3 voxels)
+ * @param array 3D numpy array containing label data
+ * @return Vector of bricks with level 0 initialized
+ * @throws std::runtime_error if array is not 3D
+ */
 template <size_t b>
-std::vector<Brick<b>> splitGridIntoBricks(const NpyArray& array)
+std::vector<Brick<b>> splitGridIntoBricks(const NpyArray &array)
 {
     if (array.shape.size() != 3)
         throw std::runtime_error("Expected a 3D array");
@@ -124,7 +162,7 @@ std::vector<Brick<b>> splitGridIntoBricks(const NpyArray& array)
                 pyramid.ID =
                     Utils::morton3D(bx, by, bz); // returns uint64_t
 
-                auto& nodes = pyramid.levels[0]; // L0
+                auto &nodes = pyramid.levels[0]; // L0
                 nodes.resize(b * b * b);
 
                 // Convert brick-space ? voxel-space
@@ -142,14 +180,12 @@ std::vector<Brick<b>> splitGridIntoBricks(const NpyArray& array)
 
                             LabelType label = 0; // default / padding
                             if (gx < width && gy < height && gz < depth)
-                                label = array.data[
-                                    gx + width * (gy + height * gz)
-                                ];
+                                label = array.data[gx + width * (gy + height * gz)];
 
                             const size_t mortonIndex =
                                 Utils::morton3D(dx, dy, dz);
 
-                            nodes[mortonIndex] = { label, true };
+                            nodes[mortonIndex] = {label, true};
                         }
 
                 bricks.push_back(std::move(pyramid));

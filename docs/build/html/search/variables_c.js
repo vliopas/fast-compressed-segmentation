@@ -1,0 +1,20 @@
+var searchData=
+[
+  ['name_0',['name',['../structgz__header__s.html#a60ae5eee2882d1c25b3bb328972f0149',1,'gz_header_s']]],
+  ['name_5fmax_1',['name_max',['../structgz__header__s.html#af503d267de15a461b81dcbbfb0d628e5',1,'gz_header_s']]],
+  ['neighborx_2',['NeighborX',['../decode_8wgsl.html#ab33cb76ece74d3e8c95253fe55fd09ec',1,'decode.wgsl']]],
+  ['neighborxneg_3',['neighborXNeg',['../struct_encoding_1_1_operation_stats.html#a17dde61db2158d2eb73af32163088a8a',1,'Encoding::OperationStats']]],
+  ['neighborxpos_4',['neighborXPos',['../struct_encoding_1_1_operation_stats.html#a4727234f3707015a560837e4d19bc9cc',1,'Encoding::OperationStats']]],
+  ['neighbory_5',['NeighborY',['../decode_8wgsl.html#a044ecca12291256939f35c64ad19aaa7',1,'decode.wgsl']]],
+  ['neighboryneg_6',['neighborYNeg',['../struct_encoding_1_1_operation_stats.html#a997f12401cfe539d048e2544b0637f65',1,'Encoding::OperationStats']]],
+  ['neighborypos_7',['neighborYPos',['../struct_encoding_1_1_operation_stats.html#a6d6a04dd015f4d1fc98d418237d7da16',1,'Encoding::OperationStats']]],
+  ['neighborz_8',['NeighborZ',['../decode_8wgsl.html#ab58a3a326251f4bb7fd1ef807ac621b2',1,'decode.wgsl']]],
+  ['neighborzneg_9',['neighborZNeg',['../struct_encoding_1_1_operation_stats.html#aa44bf371f52d2f68d48ea2e75e8b6259',1,'Encoding::OperationStats']]],
+  ['neighborzpos_10',['neighborZPos',['../struct_encoding_1_1_operation_stats.html#a183caea0f896c5b79da1d9e668729394',1,'Encoding::OperationStats']]],
+  ['next_5fin_11',['next_in',['../structz__stream__s.html#a21d2c026f0f2fcd67f33011231f8ed00',1,'z_stream_s']]],
+  ['next_5fout_12',['next_out',['../structz__stream__s.html#aed4a02cfe93e975314fed50b04427bf3',1,'z_stream_s']]],
+  ['nibblestream_13',['nibbleStream',['../decode_8wgsl.html#a142166c98bea42e8c51a49c82ad04517',1,'decode.wgsl']]],
+  ['not_5frequested_14',['NOT_REQUESTED',['../ray_trace_8wgsl.html#a387f7ae9df77bca0dc5b16cad57d5637',1,'rayTrace.wgsl']]],
+  ['nsymbols_15',['nSymbols',['../struct_encoding_1_1_compressed_brick.html#a5f05040bffcfb74ec58e2f37112abbb8',1,'Encoding::CompressedBrick']]],
+  ['num_5fvals_16',['num_vals',['../structcnpy_1_1_npy_array.html#a8eba9ba1c8987d9364312b579f3444b8',1,'cnpy::NpyArray']]]
+];

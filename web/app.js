@@ -1,3 +1,11 @@
+/**
+ * @file app.js
+ * @brief Main application entry point for WebGPU volume renderer
+ * 
+ * Initializes the dataset loader, WebGPU renderer, and user interface.
+ * Handles dataset loading, decoding, and rendering setup.
+ */
+
 import { loadDatasetFromArrayBuffer } from "./scripts/datasetLoader.js";
 import { decodeAllRansBricks } from './scripts/decode.js';
 import { initWebGPU, updateLightingOptions, applyLabelVisibility, applyLabelHover, getDatasetLabels } from './scripts/webgpuSetup.js';
@@ -16,7 +24,11 @@ logger.log('Logger initialized');
 
 // ==================== Morton Code Utilities ====================
 
-// Decode Morton code to 3D coordinates (for debugging)
+/**
+ * Decode Morton code to 3D coordinates (for debugging)
+ * @param {number} code - Morton-encoded index
+ * @return {{x: number, y: number, z: number}} 3D coordinates
+ */
 function decodeMorton3D(code) {
     const compact1by2 = (n) => {
         n &= 0x9249249;
@@ -34,6 +46,12 @@ function decodeMorton3D(code) {
 
 // ==================== Dataset Loading ====================
 
+/**
+ * Load the compressed dataset from the server
+ * @async
+ * @return {Promise<Object>} Loaded dataset object
+ * @throws {Error} If dataset fails to load
+ */
 async function loadFixedDataset() {
     const response = await fetch("../encoder/CSVEncoder/compressed_dataset.csbd");
 
@@ -48,6 +66,12 @@ async function loadFixedDataset() {
     return loadedDataset;
 }
 
+/**
+ * Decode all brick data using rANS decoding
+ * @async
+ * @param {Object} loadedDataset - Dataset with encoded bricks
+ * @return {Promise<Object>} Dataset with decoded bricks
+ */
 async function decodeBricksData(loadedDataset) {
     const decodedBricks = await decodeAllRansBricks(loadedDataset);
     decodedBricks.forEach((decoded, i) => {
@@ -59,6 +83,10 @@ async function decodeBricksData(loadedDataset) {
 
 // ==================== Application Initialization ====================
 
+/**
+ * Initialize the application
+ * @async
+ */
 async function initApp() {
     try {
         // Load and decode dataset
@@ -84,6 +112,9 @@ initApp();
 
 // =============== UI Wiring ===============
 
+/**
+ * Setup lighting UI controls and apply defaults
+ */
 function setupLightingUI() {
     // Use default lighting values without UI controls
     currentLightAngle = 25;
@@ -95,6 +126,10 @@ function setupLightingUI() {
     });
 }
 
+/**
+ * Setup label visibility UI controls
+ * @param {Object} dataset - Dataset containing labels
+ */
 function setupLabelVisibilityUI(dataset) {
     const listEl = document.getElementById('label-visibility-list');
     const applyBtn = document.getElementById('label-visibility-apply');

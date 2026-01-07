@@ -1,8 +1,11 @@
-// Ray tracing with transfer function, empty-space skipping, and LOD selection
-
-// Gradient shading and AO always enabled
-
-// f16 disabled for compatibility with GPUs that do not support it
+/**
+ * @file rayTrace.wgsl
+ * @brief GPU ray tracing compute shader
+ * 
+ * Ray tracing with transfer function, empty-space skipping, and LOD selection.
+ * Gradient shading and ambient occlusion always enabled.
+ * f16 disabled for compatibility with GPUs that do not support it.
+ */
 
 struct DynamicBrickInfo {
     outputOffset: u32,        // Offset into outVoxels buffer
