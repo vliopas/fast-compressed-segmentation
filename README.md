@@ -29,6 +29,17 @@ The paper's descriptions of the algorithm is used as reference for structuring a
 
 This repo includes a Doxygen configuration to generate API documentation for the *C++* encoder, *JavaScript*-*WebGPU* code, and *WGSL* shaders. The documentation `html` file is located in [docs/index.md](docs/index.md). Open it in a browser using a live server (instructions right above) to see a more thorough explanation of the classes and functions used for the project.
 
+## How to use
+
+### Encoder
+
+To use the encoder you first need to run the `dataset.py` script that downloads a tile from the preferred dataset (minnie65) from the cloud. The `.npy` uncompressed file is stored in the proper location to be then detected by the `C++` code and binaries. For now we only support cubes of $b^3$ dimensions where $b$ is a power of 2 for the downloaded tile. Once the uncompressed file is downloaded one only needs to run the executable (or run the code through an IDE) to get the compressed equivalent in a custom `.csdb` format - which is basically a text file.
+
+### Decoder and renderer
+
+The decoding/decompression and the ray marcher run "together" dynamically, in real time. One simply needs to run the `web/index.html` file in a browser. For now, due to differencies in WGSL features supported by each browser, **Firefox and Firefox forks are not supported** and the ray marcher only runs in Chromium-based browsers by following [the instructions above](#using-vs-code-live-server-what-i-used).
+
+
 ## Results and Visual Examples
 
 ### Single View
